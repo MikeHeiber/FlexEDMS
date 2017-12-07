@@ -1,4 +1,11 @@
 #pragma rtGlobals=1	// Use modern global access method.
+#pragma IgorVersion = 6.3 // Minimum Igor version required
+#pragma version = 0.1-alpha 
+
+// Copyright (c) 2017 Michael C. Heiber
+// This source file is part of the FlexEDMS project, which is subject to the MIT License.
+// For more information, see the LICENSE file that accompanies this software.
+// The FlexEDMS project can be found on Github at https://github.com/MikeHeiber/FlexEDMS
 
 Menu "FlexEDMS"
 	"Create New Sample", CreateNewSample()
@@ -20,7 +27,7 @@ Function AnalyzeTOF()
 	Variable i
 	for(i=0;i<N_samples;i+=1)
 		folder_name = GetIndexedObjNameDFR(dfr1,4,i)
-		if(StringMatch(folder_name,"Sample*"))
+		if(StringMatch(folder_name,"*"))
 			SetDataFolder :$(folder_name)
 			if(DataFolderExists("Time of Flight"))
 				sample_list = AddListItem(folder_name,sample_list)
@@ -100,7 +107,7 @@ Function AnalyzeTOF()
 		Variable j
 		for(j=0;j<N_biases;j+=1)
 			String bias_name = GetIndexedObjNameDFR(dfr2,4,j)
-			SetDataFolder root:$(sample_name):$("Time of Flight"):$(carrier_type):$(temp_name):$(bias_name)
+			SetDataFolder :$(bias_name)
 			Variable/G Measurement_index = measurement_count
 			temperature_K[Measurement_index] = {str2num(StringFromList(0,temp_name,"K"))}
 			voltage_V[Measurement_index] = {str2num(StringFromList(0,bias_name,"V"))}
@@ -110,6 +117,7 @@ Function AnalyzeTOF()
 				return NaN
 			endif
 			measurement_count+=1
+			SetDataFolder ::
 		endfor
 		SetDataFolder ::
 	endfor
@@ -525,7 +533,7 @@ Function PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
 	String temp_name
 	String bias_name
 	String original_folder = GetDataFolder(1)
-	SetDataFolder root:$(sample_name):$("Time of Flight"):$(carrier_type):$(temp_name):$(bias_name)
+	SetDataFolder root:FlexEDMS:$(sample_name):$("Time of Flight"):$(carrier_type):$(temp_name):$(bias_name)
 	String time_waves = WaveList("t*",";","")
 	Wave times = $(StringFromList(0,time_waves))
 	String voltage_waves = WaveList("*V_*",";","")

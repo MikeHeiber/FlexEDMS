@@ -1,0 +1,10 @@
+## FlexEDMS sample type file
+sample_name,text
+fab_date,text
+fab_person,text
+fab_method,text
+fab_comments,text
+active_composition,text
+active_thickness,m
+anode_material,text
+cathode_material,text

@@ -8,13 +8,13 @@
 // The FlexEDMS project can be found on Github at https://github.com/MikeHeiber/FlexEDMS
 
 Menu "FlexEDMS"
-	"Create New Sample", CreateNewSample()
-	"Edit Sample Info", EditSampleInfo()
-	"Analyze ToF", AnalyzeTOF()
-	"Load ToF Data", LoadTOFData()
+	"Create New Sample", FEDMS_CreateNewSample()
+	"Edit Sample Info", FEDMS_EditSampleInfo()
+	"Analyze ToF", FEDMS_AnalyzeTOF()
+	"Load ToF Data", FEDMS_LoadTOFData()
 End
 
-Function AnalyzeTOF()
+Function FEDMS_AnalyzeTOF()
 	String original_folder = GetDataFolder(1)
 	String sample_name
 	String carrier_type
@@ -111,7 +111,7 @@ Function AnalyzeTOF()
 			Variable/G Measurement_index = measurement_count
 			temperature_K[Measurement_index] = {str2num(StringFromList(0,temp_name,"K"))}
 			voltage_V[Measurement_index] = {str2num(StringFromList(0,bias_name,"V"))}
-			AnalyzeTOFData(sample_name,temp_name,carrier_type,bias_name)
+			FEDMS_AnalyzeTOFData(sample_name,temp_name,carrier_type,bias_name)
 			if(V_status==-1)
 				KillVariables V_status
 				return NaN
@@ -125,14 +125,14 @@ Function AnalyzeTOF()
 	SetDataFolder original_folder
 End
 
-Function AnalyzeTOFData(sample_name,temp_name,carrier_type,bias_name)
+Function FEDMS_AnalyzeTOFData(sample_name,temp_name,carrier_type,bias_name)
 	String sample_name
 	String temp_name
 	String carrier_type
 	String bias_name
 	String original_folder = GetDataFolder(1)
 	SetDataFolder root:FlexEDMS:$(sample_name):$("Time of Flight"):$(carrier_type):$(temp_name):$(bias_name)
-	PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
+	FEDMS_PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
 	String trace_name = StringFromList(0,TraceNameList("",";",1))
 	Wave times = XWaveRefFromTrace("",trace_name)
 	Wave fit_pre_transit
@@ -159,14 +159,14 @@ Function AnalyzeTOFData(sample_name,temp_name,carrier_type,bias_name)
 	ModifyGraph margin(left)=35
 	ModifyGraph margin(top)=25
 	DrawText 0,0,"\\Z10Move cursors to pre- and post-transit regions and click Analyze."
-	Button button0 title="Analyze",proc=FitTOFButtonProc,size={60,25},fSize=14
-	Button button1 title="Done",proc=DoneTOFButtonProc,size={60,25},fSize=14
-	Button button2 title="Cancel",proc=CancelTOFButtonProc,size={60,25},fSize=14
+	Button button0 title="Analyze",proc=FEDMS_FitTOFButtonProc,size={60,25},fSize=14
+	Button button1 title="Done",proc=FEDMS_DoneTOFButtonProc,size={60,25},fSize=14
+	Button button2 title="Cancel",proc=FEDMS_CancelTOFButtonProc,size={60,25},fSize=14
 	PauseForUser $graph_name
 	SetDataFolder original_folder
 End
 
-Function CancelTOFButtonProc(ba) : ButtonControl
+Function FEDMS_CancelTOFButtonProc(ba) : ButtonControl
 	STRUCT WMButtonAction &ba
 	switch( ba.eventCode )
 		case 2: // mouse up
@@ -182,7 +182,7 @@ Function CancelTOFButtonProc(ba) : ButtonControl
 	return 0
 End
 
-Function/S CreateNewSample()
+Function/S FEDMS_CreateNewSample()
 	String original_folder = GetDataFolder(1)
 	String sample_name
 	String fab_date
@@ -216,11 +216,11 @@ Function/S CreateNewSample()
 	return sample_name
 End
 
-Function CreateNewSample2()
-	LoadSampleTypes()
+Function FEDMS_CreateNewSample2()
+	FEDMS_LoadSampleTypes()
 End
 
-Function DoneTOFButtonProc(ba) : ButtonControl
+Function FEDMS_DoneTOFButtonProc(ba) : ButtonControl
 	STRUCT WMButtonAction &ba
 	switch( ba.eventCode )
 		case 2: // mouse up
@@ -233,7 +233,7 @@ Function DoneTOFButtonProc(ba) : ButtonControl
 	return 0
 End
 
-Function/S DoOpenMultiFileDialog()
+Function/S FEDMS_DoOpenMultiFileDialog()
 	Variable refNum
 	String message = "Select one or more files"
 	String outputPaths
@@ -247,7 +247,7 @@ Function/S DoOpenMultiFileDialog()
 	return outputPaths		// Will be empty if user canceled
 End
 
-Function EditSampleInfo()
+Function FEDMS_EditSampleInfo()
 	String original_folder = GetDataFolder(1)
 	// Build the sample list
 	SetDataFolder root:FlexEDMS
@@ -294,7 +294,7 @@ Function EditSampleInfo()
 	SetDataFolder original_folder
 End
 
-Function FilterMobilityData(sample_name,dispersion_limit)
+Function FEDMS_FilterMobilityData(sample_name,dispersion_limit)
 	String sample_name
 	Variable dispersion_limit
 	String original_folder = GetDataFolder(1)
@@ -315,7 +315,7 @@ Function FilterMobilityData(sample_name,dispersion_limit)
 	endfor
 End
 
-Function FitTOFButtonProc(ba) : ButtonControl
+Function FEDMS_FitTOFButtonProc(ba) : ButtonControl
 	STRUCT WMButtonAction &ba
 	switch( ba.eventCode )
 		case 2: // mouse up
@@ -389,11 +389,11 @@ Function FitTOFButtonProc(ba) : ButtonControl
 	return 0
 End
 
-Function LoadSampleTypes()
+Function FEDMS_LoadSampleTypes()
 	
 End
 
-Function LoadTOFData()
+Function FEDMS_LoadTOFData()
 	String original_folder = GetDataFolder(1)
 	Variable voltage_amplification
 	String measurement_person
@@ -402,7 +402,7 @@ Function LoadTOFData()
 	Prompt measurement_person, "Enter the measurement person:"
 	Prompt measurement_comments, "Enter any additional measurement comments:"
 	DoPrompt "Enter Measurement Info", voltage_amplification, measurement_person, measurement_comments
-	String file_list = DoOpenMultiFileDialog()
+	String file_list = FEDMS_DoOpenMultiFileDialog()
 	String sample_name
 	String folder_path
 	SetDataFolder root:FlexEDMS
@@ -421,7 +421,7 @@ Function LoadTOFData()
 	Prompt sample_name, "Choose the sample:", popup, sample_list
 	DoPrompt "Make Selections",sample_name
 	if(StringMatch(sample_name,"Add New Sample"))
-		sample_name = CreateNewSample()
+		sample_name = FEDMS_CreateNewSample()
 	endif
 	SetDataFolder root:FlexEDMS:$(sample_name)
 	NewDataFolder/S/O $("Time of Flight")
@@ -429,12 +429,12 @@ Function LoadTOFData()
 	Print "Loading "+num2str(ItemsInList(file_list,"\r"))+" data files..."
 	for(i=0;i<ItemsInList(file_list,"\r");i+=1)
 		String fullpathname = StringFromList(i,file_list,"\r")
-		LoadTOFDataFile(sample_name,fullpathname,voltage_amplification,measurement_person,measurement_comments)
+		FEDMS_LoadTOFDataFile(sample_name,fullpathname,voltage_amplification,measurement_person,measurement_comments)
 	endfor
 	SetDataFolder original_folder
 End
 
-Function LoadTOFDataFile(sample_name,fullpathname,amplification,person,comments)
+Function FEDMS_LoadTOFDataFile(sample_name,fullpathname,amplification,person,comments)
 	String sample_name
 	String fullpathname
 	Variable amplification
@@ -527,7 +527,7 @@ Function LoadTOFDataFile(sample_name,fullpathname,amplification,person,comments)
 	KillWaves $("wave0") voltage_raw
 End
 
-Function PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
+Function FEDMS_PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
 	String sample_name
 	String carrier_type
 	String temp_name

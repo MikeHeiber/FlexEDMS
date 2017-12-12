@@ -1,6 +1,6 @@
 #pragma rtGlobals=1	// Use modern global access method.
 #pragma IgorVersion = 6.3 // Minimum Igor version required
-#pragma version = 0.1-alpha 
+#pragma version = 0.1.1-alpha 
 
 // Copyright (c) 2017 Michael C. Heiber
 // This source file is part of the FlexEDMS project, which is subject to the MIT License.
@@ -10,21 +10,27 @@
 #include <KBColorizeTraces>
 
 Menu "FlexEDMS"
-	"Create New Sample", FEDMS_CreateNewSample()
-	"Edit Sample Info", FEDMS_EditSampleInfo()
+	"Create New Sample", /Q, FEDMS_CreateNewSample()
+	"Edit Sample Info", /Q, FEDMS_EditSampleInfo()
 	Submenu "Time of Flight"
-		"Load ToF Data Files", FEDMS_LoadTOFDataFiles()
-		"Load ToF Data Folder", FEDMS_LoadTOFDataFolder()
-		"Analyze ToF", FEDMS_AnalyzeTOF()
-		"Plot ToF Field Dependence", FEDMS_PlotTOF_FieldDependences()
-		"Plot ToF Temperature Dependence", FEDMS_PlotTOF_TempDependence()
+		"Load ToF Data Files", /Q, FEDMS_LoadTOFDataFiles()
+		"Load ToF Data Folder", /Q, FEDMS_LoadTOFDataFolder()
+		"Analyze ToF Data", /Q, FEDMS_AnalyzeTOF()
+		"Plot ToF Field Dependence", /Q, FEDMS_PlotTOF_FieldDependences()
+		"Plot ToF Temperature Dependence", /Q, FEDMS_PlotTOF_TempDependence()
 	End
 End
 
 Function FEDMS_AnalyzeTOF()
 	String original_folder = GetDataFolder(1)
 	String sample_name = FEDMS_ChooseTOFSample()
+	if(StringMatch(sample_name,""))
+		return NaN
+	endif
 	String carrier_type = FEDMS_ChooseTOFCarrierType(sample_name)
+	if(StringMatch(carrier_type,""))
+		return NaN
+	endif
 	SetDataFolder root:FlexEDMS:$(sample_name):$("Time of Flight"):$(carrier_type)
 	// Build the temperature list
 	String temperature_option
@@ -45,11 +51,7 @@ Function FEDMS_AnalyzeTOF()
 	for(i=0;i<N_temps;i+=1)
 		Variable measurement_count = 0
 		String temperature_name
-		if(StringMatch(temperature_option,"all"))
-			temperature_name = StringFromList(i+1,temperature_list)
-		else
-			temperature_name = StringFromList(i,temperature_list)
-		endif
+		temperature_name = StringFromList(i+1,temperature_list)
 		if(StringMatch(temperature_option,"all") || StringMatch(temperature_name,temperature_option))
 			SetDataFolder :$(temperature_name)
 			Wave/Z voltage_V
@@ -87,13 +89,22 @@ Function FEDMS_AnalyzeTOF()
 				Make/N=1/D $"rejection_mask"
 				Wave rejection_mask
 			endif
-			// Determine number of biases
+			// Determine number of biases and build bias list
 			DFREF dfr2 = GetDataFolderDFR()
 			Variable N_biases = CountObjectsDFR(dfr2,4)
-			// Loop through all biases for the given temperature
+			String bias_list = ""
 			Variable j
 			for(j=0;j<N_biases;j+=1)
-				String bias_name = GetIndexedObjNameDFR(dfr2,4,j)
+				bias_list = AddListItem(GetIndexedObjNameDFR(dfr2,4,j),bias_list)
+			endfor
+			if(StringMatch(StringFromList(0,bias_list),"-*"))
+				bias_list = SortList(bias_list,";",17)
+			else
+				bias_list = SortList(bias_list,";",16)
+			endif
+			// Loop through all biases for the given temperature
+			for(j=0;j<N_biases;j+=1)
+				String bias_name = StringFromList(j,bias_list)
 				SetDataFolder :$(bias_name)
 				Variable/G Measurement_index = measurement_count
 				voltage_V[Measurement_index] = {str2num(StringFromList(0,bias_name,"V"))}
@@ -435,7 +446,7 @@ Function/S FEDMS_CreateNewSample()
 		SetDataFolder original_folder
 		return ""
 	endif
-	SetDataFolder root:FlexEDMS
+	NewDataFolder/O/S root:FlexEDMS
 	if(!DataFolderExists(sample_name))
 		NewDataFolder $(sample_name)
 	endif
@@ -712,10 +723,11 @@ Function FEDMS_PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
 	Wave times = $(StringFromList(0,time_waves))
 	String voltage_waves = WaveList("*V_*",";","")
 	Wave voltage = $(StringFromList(0,voltage_waves))
-	Display voltage vs times;DelayUpdate
+	Display voltage vs times
 	Execute "FEDMS_GraphStyle()"
 	SetAxis left 0.02,2
-	SetAxis bottom 1e-7,1e-4
+	FindLevel/EDGE=2/R=[0]/Q voltage, 0.02
+	SetAxis bottom 1e-7,2*times[ceil(V_LevelX)]
 	Label left "Normalized Current (a.u.)"
 	Label bottom "Time (s)"
 	TextBox/C/N=text0/F=0/Z=1/A=MT carrier_type+" @ T="+temp_name+", V="+bias_name
@@ -771,6 +783,7 @@ Function FEDMS_PlotTOF_FieldDependences()
 	ModifyGraph mode=4,marker=19,log(bottom)=0,gaps=0
 	Label left "Charge Carrier Mobility (cm\\S2\\MV\\S-1\\Ms\\S-1\\M)"
 	Label bottom "Electric Field (V/m)"
+	TextBox/C/N=text0/F=0/A=LB sample_name+"\r"+carrier_type
 	// Loop though all temperatures and plot dispersion vs electric_field
 	plot_count = 0
 	for(i=0;i<N_temps;i+=1)
@@ -792,6 +805,7 @@ Function FEDMS_PlotTOF_FieldDependences()
 	ModifyGraph mode=4,marker=19,log=0,gaps=0
 	Label left "Dispersion"
 	Label bottom "Electric Field (V/m)"
+	TextBox/C/N=text0/F=0/A=RB sample_name+"\r"+carrier_type
 	SetDataFolder original_folder
 End
 
@@ -813,9 +827,14 @@ Function FEDMS_PlotTOF_TempDependence()
 	ErrorBars mobility_avg Y,wave=(mobility_stdev,mobility_stdev)
 	Label left "Charge Carrier Mobility (cm\\S2\\MV\\S-1\\Ms\\S-1\\M)"
 	Label bottom "Temperature (K)"
+	TextBox/C/N=text0/F=0/A=LB sample_name+"\r"+carrier_type
 End
 
 Macro FEDMS_GraphStyle() : GraphStyle
+	// Axes format
 	ModifyGraph log=1,tick=2,mirror=1,logLabel=2,standoff=0,logTicks=3,logHTrip(left)=100,logLTrip(left)=0.01
+	// Figure size
 	ModifyGraph width=415,height={Aspect,0.7}
+	// Figure margins
+	ModifyGraph margin(left)=43,margin(bottom)=36
 End

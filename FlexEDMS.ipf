@@ -1,6 +1,6 @@
 #pragma rtGlobals=1	// Use modern global access method.
 #pragma IgorVersion = 6.3 // Minimum Igor version required
-#pragma version = 0.1.1-alpha 
+#pragma version = 0.1.2-alpha 
 
 // Copyright (c) 2017 Michael C. Heiber
 // This source file is part of the FlexEDMS project, which is subject to the MIT License.
@@ -428,11 +428,20 @@ End
 
 Function/S FEDMS_CreateNewSample()
 	String original_folder = GetDataFolder(1)
-	String sample_name
+	NewDataFolder/O/S root:FlexEDMS
+	// Build the current sample list
+	String sample_list = ""
+	DFREF dfr1 = GetDataFolderDFR()
+	Variable N_samples = CountObjectsDFR(dfr1,4)
+	Variable i
+	for(i=0;i<N_samples;i+=1)
+		sample_list = AddListItem(GetIndexedObjNameDFR(dfr1,4,i),sample_list)
+	endfor
+	String sample_name = ""
 	String fab_date
 	String fab_person
 	String sample_comp
-	Variable sample_thickness
+	Variable sample_thickness = 0
 	String comments
 	Prompt sample_name, "Enter the sample name:"
 	Prompt fab_date, "Enter the fabrication date:"
@@ -440,13 +449,28 @@ Function/S FEDMS_CreateNewSample()
 	Prompt sample_comp, "Enter the composition of the semiconductor layer:"
 	Prompt sample_thickness, "Enter the semiconductor layer thickness (m):"
 	Prompt comments, "Enter any additional comments and notes:"
-	DoPrompt "Enter Sample Info",sample_name, fab_date, fab_person, sample_comp, sample_thickness, comments
+	Variable input_needed = 1
+	do
+		DoPrompt "Enter Sample Info",sample_name, fab_date, fab_person, sample_comp, sample_thickness, comments
+		if(V_flag==1)
+			break
+		endif
+		// Check if required parameters have been completed
+		if(!sample_thickness>0 || StringMatch(sample_name,""))
+			DoAlert 0, "You must at least specify a sample name and a layer thickness value."
+			continue
+		// Check for sample name conflict
+		elseif(FindListItem(sample_name,sample_list)!=-1)
+			DoAlert 0, "A sample with that name already exists in your database, enter a different name."
+		else
+			input_needed = 0
+		endif
+	while(input_needed==1)
 	// User cancelled operation
 	if(V_flag==1)
 		SetDataFolder original_folder
 		return ""
 	endif
-	NewDataFolder/O/S root:FlexEDMS
 	if(!DataFolderExists(sample_name))
 		NewDataFolder $(sample_name)
 	endif
@@ -467,13 +491,13 @@ End
 Function/S FEDMS_DoOpenMultiFileDialog()
 	Variable refNum
 	String message = "Select one or more files"
-	String outputPaths
+	String outputPaths = ""
 	String fileFilters = "Data Files (*.txt,*.dat,*.csv):.txt,.dat,.csv;"
 	fileFilters += "All Files:.*;"
 	Open /D /R /MULT=1 /F=fileFilters /M=message refNum
 	outputPaths = S_fileName
 	if (strlen(outputPaths) == 0)
-		Print "Cancelled"
+		return ""
 	endif
 	return outputPaths		// Will be empty if user canceled
 End
@@ -594,14 +618,25 @@ End
 
 Function FEDMS_LoadTOFDataFiles()
 	String original_folder = GetDataFolder(1)
-	Variable voltage_amplification
+	Variable voltage_amplification = 0
 	String measurement_person
 	String measurement_comments
 	Prompt voltage_amplification, "Enter voltage amplification:"
 	Prompt measurement_person, "Enter the measurement person:"
 	Prompt measurement_comments, "Enter any additional measurement comments:"
-	DoPrompt "Enter Measurement Info", voltage_amplification, measurement_person, measurement_comments
+	do
+		DoPrompt "Enter Measurement Info", voltage_amplification, measurement_person, measurement_comments
+		if(V_flag==1)
+			return NaN
+		endif
+		if(!voltage_amplification>0)
+			DoAlert 0, "The voltage amplification value must be greater than 0."
+		endif
+	while(!voltage_amplification>0)
 	String file_list = FEDMS_DoOpenMultiFileDialog()
+	if(StringMatch(file_list,""))
+		return NaN
+	endif
 	String sample_name = FEDMS_ChooseSample()
 	if(StringMatch(sample_name,""))
 		return NaN
@@ -635,7 +670,7 @@ Function FEDMS_LoadTOFDataFile(sample_name,fullpathname,amplification,person,com
 	SetDataFolder root:FlexEDMS:$(sample_name):$("Time of Flight"):
 	// Load file into text wave
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
-	LoadWave/A/J/Q/K=2 fullpathname
+	LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
 	Wave/T wave0
 	// Parse filename
 	carrier_type = StringFromList(0,filename,"_")
@@ -725,8 +760,8 @@ Function FEDMS_PlotTOFData(sample_name,carrier_type,temp_name,bias_name)
 	Wave voltage = $(StringFromList(0,voltage_waves))
 	Display voltage vs times
 	Execute "FEDMS_GraphStyle()"
-	SetAxis left 0.02,2
-	FindLevel/EDGE=2/R=[0]/Q voltage, 0.02
+	SetAxis left 0.01,2
+	FindLevel/EDGE=2/R=[0]/Q voltage, 0.01
 	SetAxis bottom 1e-7,2*times[ceil(V_LevelX)]
 	Label left "Normalized Current (a.u.)"
 	Label bottom "Time (s)"

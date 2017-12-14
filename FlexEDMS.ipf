@@ -50,7 +50,7 @@ Function FEDMS_AnalyzeTOF(isIntensityTest)
 		temperature_name = GetIndexedObjNameDFR(dfr1,4,i)
 		if(StringMatch(temperature_name,"!intensity_test"))
 			temperature_list = AddListItem(temperature_name,temperature_list)
-			endif
+		endif
 	endfor
 	temperature_list = SortList(temperature_list,";",16)
 	// Prompt user to choose temperature
@@ -242,12 +242,15 @@ Function FEDMS_AnalyzeTOF_TempDependence(sample_name,carrier_type)
 	String temperature_list = ""
 	Variable i
 	for(i=0;i<N_temps;i+=1)
-		temperature_list = AddListItem(GetIndexedObjNameDFR(dfr1,4,i),temperature_list)
+		String temperature_name = GetIndexedObjNameDFR(dfr1,4,i)
+		if(StringMatch(temperature_name,"!intensity_test"))
+			temperature_list = AddListItem(temperature_name,temperature_list)
+		endif
 	endfor
 	temperature_list = SortList(temperature_list,";",16)
 	Make/D/N=5/O mobility_temp
 	for(i=0;i<N_temps;i+=1)
-		String temperature_name = StringFromList(i,temperature_list)
+		temperature_name = StringFromList(i,temperature_list)
 		SetDataFolder :$(temperature_name)
 		Duplicate/O dispersion dispersion_temp
 		Wave mobility_geo
@@ -953,7 +956,10 @@ Function FEDMS_PlotTOF_FieldDependences()
 	String temperature_list = "all"
 	Variable i
 	for(i=0;i<N_temps;i+=1)
-		temperature_list = AddListItem(GetIndexedObjNameDFR(dfr1,4,i),temperature_list)
+		String temperature_name = GetIndexedObjNameDFR(dfr1,4,i)
+		if(StringMatch(temperature_name,"!intensity_test"))
+			temperature_list = AddListItem(temperature_name,temperature_list)
+		endif
 	endfor
 	temperature_list = SortList(temperature_list,";",16)
 	// Prompt user to choose temperature
@@ -965,7 +971,7 @@ Function FEDMS_PlotTOF_FieldDependences()
 	temperature_list = RemoveEnding(temperature_list,";all")
 	Variable plot_count = 0
 	for(i=0;i<N_temps;i+=1)
-		String temperature_name = StringFromList(i,temperature_list)
+		temperature_name = StringFromList(i,temperature_list)
 		// Check for selected temperature option
 		if(StringMatch(temperature_option,"all") || StringMatch(temperature_name,temperature_option))
 			SetDataFolder :$(temperature_name)

@@ -1,6 +1,6 @@
 #pragma rtGlobals=1	// Use modern global access method.
 #pragma IgorVersion = 6.3 // Minimum Igor version required
-#pragma version = 0.1.3-alpha 
+#pragma version = 0.1.4-alpha 
 
 // Copyright (c) 2017 Michael C. Heiber
 // This source file is part of the FlexEDMS project, which is subject to the MIT License.
@@ -191,7 +191,7 @@ Function FEDMS_AnalyzeTOFData(data_path,sample_name,temperature_name,carrier_typ
 	Wave rejection_mask
 	SetDataFolder data_path
 	FEDMS_PlotTOFData(data_path,sample_name,carrier_type,temperature_name,bias_name)
-	ModifyGraph expand=1.5
+	ModifyGraph expand=1.3
 	String trace_name = StringFromList(0,TraceNameList("",";",1))
 	Wave times = XWaveRefFromTrace("",trace_name)
 	Wave fit_pre_transit
@@ -362,7 +362,7 @@ Function FEDMS_ButtonProc_FitTOF(ba) : ButtonControl
 			Variable isIntensityTest = StringMatch(StringFromList(5,measurement_folder,":"),"intensity_test")
 			NVAR Measurement_index
 			if(isIntensityTest)
-				SetDataFolder ::::::
+				SetDataFolder :::::::
 			else
 				SetDataFolder :::::
 			endif
@@ -910,6 +910,10 @@ Function FEDMS_PlotTOF_IntensityTest()
 	SetDataFolder :$("intensity_test")
 	String temperature_name = FEDMS_ChooseSubfolder(GetDataFolder(1))
 	SetDataFolder :$(temperature_name)
+	Wave mobility_geo
+	Wave dispersion
+	Wave intensity
+	Wave voltage_V
 	String bias_name = FEDMS_ChooseSubfolder(GetDataFolder(1))
 	SetDataFolder :$(bias_name)
 	// Build intensity list
@@ -921,6 +925,7 @@ Function FEDMS_PlotTOF_IntensityTest()
 		intensity_list = AddListItem(GetIndexedObjNameDFR(dfr1,4,i),intensity_list)
 	endfor
 	intensity_list = SortList(intensity_list,";",16)
+	// Plot ToF transients at each intensity
 	Variable plot_count = 0
 	for(i=0;i<N_intensities;i+=1)
 		String intensity_name = StringFromList(i,intensity_list)
@@ -935,6 +940,33 @@ Function FEDMS_PlotTOF_IntensityTest()
 	endfor
 	Execute "FEDMS_GraphStyle()"
 	KBColorizeTracesLinearHue(0.5, 1, 0)
+	// Plot mobility vs intensity and dispersion vs intensity
+	SetDataFolder ::
+	Variable voltage = str2num(RemoveEnding(bias_name,"V"))
+	Variable index_start = -1
+	Variable index_end = -1
+	for(i=0;i<numpnts(voltage_V);i+=1)
+		if(index_start<0 && voltage_V[i]==voltage)
+			index_start = i
+		endif
+		if(!(index_start<0) && voltage_V[i]!=voltage_V[index_start])
+			index_end = i-1
+			break
+		endif
+		if(!(index_start<0) && i==numpnts(voltage_V)-1)
+			index_end = i
+			break
+		endif
+	endfor
+	Display mobility_geo[index_start,index_end] vs intensity[index_start,index_end]
+	Execute "FEDMS_GraphStyle()"
+	Label left "Charge Carrier Mobility (cm\\S2\\MV\\S-1\\Ms\\S-1\\M)"
+	Label bottom "Intensity"
+	Display dispersion[index_start,index_end] vs intensity[index_start,index_end]
+	Execute "FEDMS_GraphStyle()"
+	Label left "Dispersion"
+	Label bottom "Intensity"
+	// Plot dispersion vs intensity
 	SetDataFolder original_folder
 End
 

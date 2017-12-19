@@ -148,6 +148,7 @@ Function FEDMS_AnalyzeTOF(isIntensityTest)
 							SetDataFolder original_folder
 							return NaN
 						endif
+						FEDMS_AnalyzeTOF_TempDependence(sample_name,carrier_type)
 						measurement_count+=1
 						KillVariables V_status
 						SetDataFolder ::
@@ -163,6 +164,7 @@ Function FEDMS_AnalyzeTOF(isIntensityTest)
 						SetDataFolder original_folder
 						return NaN
 					endif
+					FEDMS_AnalyzeTOF_TempDependence(sample_name,carrier_type)
 					measurement_count+=1
 					KillVariables V_status
 				endif
@@ -238,7 +240,7 @@ Function FEDMS_AnalyzeTOF_TempDependence(sample_name,carrier_type)
 	String temperature_option
 	DFREF dfr1 = GetDataFolderDFR()
 	Variable N_temps = CountObjectsDFR(dfr1,4)
-	Make/N=(N_temps)/D/O temperature_K, mobility_avg, mobility_stdev
+	Make/N=(N_temps)/D/O temperature_K, mobility_avg, mobility_stdev, dispersion_avg, dispersion_stdev
 	String temperature_list = ""
 	Variable i
 	for(i=0;i<N_temps;i+=1)
@@ -252,26 +254,37 @@ Function FEDMS_AnalyzeTOF_TempDependence(sample_name,carrier_type)
 	for(i=0;i<N_temps;i+=1)
 		temperature_name = StringFromList(i,temperature_list)
 		SetDataFolder :$(temperature_name)
-		Duplicate/O dispersion dispersion_temp
-		Wave mobility_geo
-		Variable j
-		for(j=0;j<numpnts(mobility_temp);j+=1)
-			Variable k
-			Variable current_val = 1
-			Variable index = 0
-			for(k=0;k<numpnts(dispersion_temp);k+=1)
-				if(dispersion_temp[k]>0 && dispersion_temp[k]<current_val)
-					current_val = dispersion_temp[k]
-					index = k
-				endif
-			endfor
-			mobility_temp[j] = mobility_geo[index]
-			dispersion_temp[index] = 1
-		endfor
 		temperature_K[i] = str2num(RemoveEnding(temperature_name,"K"))
-		WaveStats/Q mobility_temp
+		Wave mobility_geo
+		if(!WaveExists(mobility_geo))
+			mobility_avg[i] = NaN
+			mobility_stdev[i] = NaN
+			dispersion_avg[i] = NaN
+			dispersion_stdev[i] = NaN
+			continue
+		endif
+		Duplicate/O dispersion dispersion_temp
+		//Variable j
+		//for(j=0;j<numpnts(mobility_temp);j+=1)
+		//	Variable k
+		//	Variable current_val = 1
+		//	Variable index = 0
+		//	for(k=0;k<numpnts(dispersion_temp);k+=1)
+		//		if(dispersion_temp[k]>0 && dispersion_temp[k]<current_val)
+		//			current_val = dispersion_temp[k]
+		//			index = k
+		//		endif
+		//	endfor
+		//	mobility_temp[j] = mobility_geo[index]
+		//	dispersion_temp[index] = 1
+		//endfor
+		//WaveStats/Q mobility_temp
+		WaveStats/Q mobility_geo
 		mobility_avg[i] = V_avg
 		mobility_stdev[i] = V_sdev
+		WaveStats/Q dispersion
+		dispersion_avg[i] = V_avg
+		dispersion_stdev[i] = V_sdev
 		KillWaves dispersion_temp
 		SetDataFolder ::
 	endfor
@@ -1059,11 +1072,22 @@ Function FEDMS_PlotTOF_TempDependence()
 	FEDMS_AnalyzeTOF_TempDependence(sample_name,carrier_type)
 	String original_folder = GetDataFolder(1)
 	SetDataFolder root:FlexEDMS:$(sample_name):$("Time of Flight"):$(carrier_type)
+	// Plot mobility vs T
 	Display mobility_avg vs temperature_K
 	Execute "FEDMS_GraphStyle()"
+	ModifyGraph log(bottom)=0
 	ModifyGraph mode=4,marker=19,rgb=(0,0,65535)
 	ErrorBars mobility_avg Y,wave=(mobility_stdev,mobility_stdev)
 	Label left "Charge Carrier Mobility (cm\\S2\\MV\\S-1\\Ms\\S-1\\M)"
+	Label bottom "Temperature (K)"
+	TextBox/C/N=text0/F=0/A=LB sample_name+"\r"+carrier_type
+	// Plot dispersion vs T
+	Display dispersion_avg vs temperature_K
+	Execute "FEDMS_GraphStyle()"
+	ModifyGraph log=0
+	ModifyGraph mode=4,marker=19,rgb=(0,0,65535)
+	ErrorBars dispersion_avg Y,wave=(dispersion_stdev,dispersion_stdev)
+	Label left "Dispersion"
 	Label bottom "Temperature (K)"
 	TextBox/C/N=text0/F=0/A=LB sample_name+"\r"+carrier_type
 End

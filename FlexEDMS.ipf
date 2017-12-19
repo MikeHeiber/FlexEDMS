@@ -1,6 +1,6 @@
 #pragma rtGlobals=1	// Use modern global access method.
 #pragma IgorVersion = 6.3 // Minimum Igor version required
-#pragma version = 0.1.4-alpha 
+#pragma version = 0.1.5-alpha 
 
 // Copyright (c) 2017 Michael C. Heiber
 // This source file is part of the FlexEDMS project, which is subject to the MIT License.

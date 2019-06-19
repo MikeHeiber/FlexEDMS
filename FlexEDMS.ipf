@@ -1,8 +1,8 @@
 #pragma rtGlobals=3	// Use modern global access method and strict wave access.
 #pragma IgorVersion = 6.3 // Minimum Igor version required
-#pragma version = 0.1.6-alpha
+#pragma version = 0.1-alpha.2
 
-// Copyright (c) 2017-2018 Michael C. Heiber
+// Copyright (c) 2017-2019 Michael C. Heiber
 // This source file is part of the FlexEDMS project, which is subject to the MIT License.
 // For more information, see the LICENSE file that accompanies this software.
 // The FlexEDMS project can be found on Github at https://github.com/MikeHeiber/FlexEDMS
@@ -359,23 +359,37 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 	Duplicate/O current J_raw
 	J_raw = 1000*current/Device_area_cm2
 	// Separate forward and reverse current sweeps
-	Variable start_point = 0
-	Variable i
-	for(i=1;i<numpnts(voltage);i+=1)
-		if(voltage[i]<voltage[i-1])
-			start_point = i-2
-			break
-		endif
-	endfor
-	Duplicate/O/R=(0,start_point) J_raw J_forward
-	Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_reverse
-	SetScale/P x voltage[0],(voltage[1]-voltage[0]),"", J_forward
-	SetScale/P x voltage[start_point+1],(voltage[start_point+2]-voltage[start_point+1]),"", J_reverse
+	Variable start_point
+	int i
+	if(voltage[0]<0)
+		start_point = 0
+		for(i=1;i<numpnts(voltage);i+=1)
+			if(voltage[i]<voltage[i-1])
+				start_point = i-2
+				break
+			endif
+		endfor
+		Duplicate/O/R=(0,start_point) J_raw J_forward
+		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_reverse
+		SetScale/P x voltage[0],(voltage[1]-voltage[0]),"", J_forward
+		SetScale/P x voltage[start_point+1],(voltage[start_point+2]-voltage[start_point+1]),"", J_reverse
+	else // Inverted sweep
+		start_point = 0
+		for(i=1;i<numpnts(voltage);i+=1)
+			if(voltage[i]>voltage[i-1])
+				start_point = i-2
+				break
+			endif
+		endfor
+		Duplicate/O/R=(0,start_point) J_raw J_reverse
+		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_forward
+		SetScale/P x voltage[0],(voltage[1]-voltage[0]),"", J_reverse
+		SetScale/P x voltage[start_point+1],(voltage[start_point+2]-voltage[start_point+1]),"", J_forward
+	endif
 	Duplicate/O J_forward J_avg
 	for(i=0;i<numpnts(J_avg);i+=1)
 		J_avg[i] = (J_forward[i] + J_reverse(pnt2x(J_forward,i)))/2
 	endfor
-	SetScale/P x pnt2x(J_forward,0),(voltage[1]-voltage[0]),"", J_avg
 	// Determine light J-V characteristics
 	Variable index_start, index_end
 	if(!StringMatch(measurement_name,"*dark*"))
@@ -560,7 +574,14 @@ Function FEDMS_AnalyzePhotocurrentData(device_name)
 		return NaN
 	endif
 	// Show all photocurrent data
-	FEDMS_PlotPhotocurrentData(device_name,show_fits=1)
+	// Show fits if analyzed previously
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$("1sun")
+	Wave/Z fit_photocurrent
+	if(WaveExists(fit_photocurrent))
+		FEDMS_PlotPhotocurrentData(device_name,show_fits=1)
+	else
+		FEDMS_PlotPhotocurrentData(device_name,show_fits=0)
+	endif
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV
 	Wave/T illuminations
 	Wave intensities
@@ -1923,9 +1944,11 @@ Function FEDMS_LoadImpedanceDataFolder()
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFile(sample_name,fullpathname)
+Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments)
 	String sample_name
 	String fullpathname
+	String persons
+	String comments
 	// Parse filename from full pathname
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
 	// Parse filename to extract device name
@@ -1946,6 +1969,9 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname)
 	String device_letter = file_device_name[strlen(file_device_name)-1]
 	NewDataFolder/O/S $device_letter
 	NewDataFolder/O/S $"JV"
+	// Enter measurement info
+	String/G Measurement_persons = persons
+	String/G Measurement_comments = comments
 	// If not a dark measurement, add to illuminations wave
 	if(!StringMatch(measurement_name,"*dark*"))
 		Wave/T illuminations
@@ -1973,6 +1999,12 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname)
 	LoadWave/A/J/D/Q/O/K=0/L={1,2,0,0,0} fullpathname
 	Duplicate/O $("wave1") voltage
 	Duplicate/O $("wave2") current
+	// Check for inverted measurement
+	WaveStats/Q voltage
+	if(current[V_maxloc]>0)
+		voltage *= -1
+		current *= -1
+	endif
 	// Clean up
 	KillWaves/Z wave0, wave1, wave2
 	SetDataFolder original_folder
@@ -1989,7 +2021,7 @@ Function FEDMS_LoadJVDataFolder()
 		return NaN
 	endif
 	NewPath/O/Q folder_path
-	if(V_flag==1)
+	if(V_flag!=0)
 		return NaN
 	endif
 	// Get list of all txt files in the folder
@@ -2023,7 +2055,7 @@ Function FEDMS_LoadJVDataFolder()
 		file_name = StringFromList(i,file_list,";")
 		PathInfo folder_path
 		String fullpathname = S_path+file_name
-		FEDMS_LoadJVDataFile(sample_name,fullpathname)
+		FEDMS_LoadJVDataFile(sample_name,fullpathname,measurement_persons,measurement_comments)
 	endfor
 	SetDataFolder original_folder
 End
@@ -2579,7 +2611,7 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[0]):
 	Display /W=(626.25,39.5,1076.25,365) $("photocurrent") vs $("voltage_effective")
 	// Append the rest of the photocurrent curves
-	Variable i
+	int i
 	for(i=1;i<numpnts(illuminations);i+=1)
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i]):
 		AppendToGraph $("photocurrent") vs $("voltage_effective")
@@ -2597,9 +2629,9 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 			AppendToGraph $("fit_photocurrent") vs $("voltage_effective")
 			ModifyGraph rgb[numpnts(illuminations)+i] = (0,0,0)
 		endfor
+		AppendToGraph J_sat_onsets vs V_eff_onsets
+		ModifyGraph mode(J_sat_onsets)=3, marker(J_sat_onsets)=18, rgb(J_sat_onsets)=(0,0,0)
 	endif
-	AppendToGraph J_sat_onsets vs V_eff_onsets
-	ModifyGraph mode(J_sat_onsets)=3, marker(J_sat_onsets)=18, rgb(J_sat_onsets)=(0,0,0)
 	// Restore working directory
 	SetDataFolder original_data_folder
 End

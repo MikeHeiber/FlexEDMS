@@ -2000,13 +2000,15 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments)
 	Duplicate/O $("wave1") voltage
 	Duplicate/O $("wave2") current
 	// Check for inverted measurement
-	WaveStats/Q voltage
+	Duplicate voltage voltage_abs
+	voltage_abs = abs(voltage)
+	WaveStats/Q voltage_abs
 	if(current[V_maxloc]>0)
 		voltage *= -1
 		current *= -1
 	endif
 	// Clean up
-	KillWaves/Z wave0, wave1, wave2
+	KillWaves/Z wave0, wave1, wave2 voltage_Abs
 	SetDataFolder original_folder
 End
 

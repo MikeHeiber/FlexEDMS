@@ -364,7 +364,6 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 	if(voltage[0]<0)
 		start_point = 0
 		for(i=1;i<numpnts(voltage);i+=1)
-			if(voltage[i]<voltage[i-1])
 			if(voltage[i-1]-voltage[i]>0.001)
 				start_point = i-2
 				break
@@ -2105,7 +2104,7 @@ Function FEDMS_LoadJVDataFolderGUI()
 		return NaN
 	endif
 	PathInfo folder_path
-	Print "ï¿½FEDMS_LoadJVDataFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+")"
+	Print "•FEDMS_LoadJVDataFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+")"
 	FEDMS_LoadJVDataFolder(S_path, measurement_persons, measurement_comments, file_format,device_area)
 End
 

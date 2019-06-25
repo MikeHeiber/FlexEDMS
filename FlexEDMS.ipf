@@ -23,11 +23,11 @@ Menu "FlexEDMS"
 		"Plot ToF Temperature Dependence", /Q, FEDMS_PlotTOF_TempDependence()
 	End
 	Submenu "J-V"
-		"Load J-V Data Folder", /Q, FEDMS_LoadJVDataFolder()
+		"Load J-V Data Folder", /Q, FEDMS_LoadJVDataFolderGUI()
 		"Plot J-V Data", /Q, FEDMS_PlotJV()
 	End
 	Submenu "IPDA"
-		"Load J-V Data Folder", /Q, FEDMS_LoadJVDataFolder()
+		"Load J-V Data Folder", /Q, FEDMS_LoadJVDataFolderGUI()
 		"Load Impedance Data Folder", /Q, FEDMS_LoadImpedanceDataFolder()
 		"Plot Photocurrent Data", /Q, FEDMS_PlotPhotocurrent()
 	End
@@ -365,27 +365,29 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 		start_point = 0
 		for(i=1;i<numpnts(voltage);i+=1)
 			if(voltage[i]<voltage[i-1])
+			if(voltage[i-1]-voltage[i]>0.001)
 				start_point = i-2
 				break
 			endif
 		endfor
 		Duplicate/O/R=(0,start_point) J_raw J_forward
 		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_reverse
-		SetScale/P x voltage[0],(voltage[1]-voltage[0]),"", J_forward
-		SetScale/P x voltage[start_point+1],(voltage[start_point+2]-voltage[start_point+1]),"", J_reverse
 	else // Inverted sweep
 		start_point = 0
 		for(i=1;i<numpnts(voltage);i+=1)
-			if(voltage[i]>voltage[i-1])
+			if(voltage[i-1]-voltage[i]>0.001)
 				start_point = i-2
 				break
 			endif
 		endfor
 		Duplicate/O/R=(0,start_point) J_raw J_reverse
 		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_forward
-		SetScale/P x voltage[0],(voltage[1]-voltage[0]),"", J_reverse
-		SetScale/P x voltage[start_point+1],(voltage[start_point+2]-voltage[start_point+1]),"", J_forward
 	endif
+	Variable voltage_step = abs(round(100*(voltage[1]-voltage[0]))/100)
+	Variable voltage_start1 = round(100*voltage[0])/100
+	Variable voltage_start2 = round(100*voltage[start_point+1])/100
+	SetScale/P x voltage_start1,voltage_step,"", J_forward
+	SetScale/P x voltage_start2,(voltage_step*-1),"", J_reverse
 	Duplicate/O J_forward J_avg
 	for(i=0;i<numpnts(J_avg);i+=1)
 		J_avg[i] = (J_forward[i] + J_reverse(pnt2x(J_forward,i)))/2
@@ -1946,12 +1948,13 @@ Function FEDMS_LoadImpedanceDataFolder()
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_format)
+Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_format,device_area)
 	String sample_name
 	String fullpathname
 	String persons
 	String comments
 	String file_format
+	Variable device_area
 	// Parse filename from full pathname
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
 	// Parse filename to extract device name
@@ -1965,7 +1968,9 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_for
 		return NaN
 	endif
 	String original_folder = GetDataFolder(1)
-	SetDataFolder root:FlexEDMS:$(sample_name)
+	NewDataFolder/O root:FlexEDMS
+	NewDataFolder/O/S root:FlexEDMS:$(sample_name)
+	Variable/G Device_area_cm2 = device_area
 	// Parse filename to extract measurement conditions
 	String measurement_name = RemoveEnding(StringFromList(3,filename,"_"),".txt")
 	// Create Subfolders
@@ -2009,12 +2014,12 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_for
 		endif
 		String/G Measurement_time = time_str
 		// Load Data Waves
-		LoadWave/A/J/D/Q/O/K=0/L={1,2,0,0,0} fullpathname
+		LoadWave/A/J/D/Q/O/K=0/O/L={1,2,0,0,0} fullpathname
 		Duplicate/O $("wave1") voltage
 		Duplicate/O $("wave2") current
 	else
 		// Load Data Waves
-		LoadWave/A/J/D/Q/O/K=0/L={0,1,0,0,0} fullpathname
+		LoadWave/A/J/D/Q/O/K=0/O/L={0,1,0,0,0} fullpathname
 		Duplicate/O $("wave1") voltage
 		Duplicate/O $("wave0") current
 	endif
@@ -2027,27 +2032,17 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_for
 		current *= -1
 	endif
 	// Clean up
-	KillWaves/Z wave0, wave1, wave2 voltage_Abs
+	KillWaves/Z $"wave0" $"wave1" $"wave2" $"wave3" $"wave4" voltage_abs
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFolder()
-	String original_folder = GetDataFolder(1)
+Function FEDMS_LoadJVDataFolder(folder_path, measurement_persons, comments, file_format, device_area)
+	String folder_path
 	String measurement_persons
-	String measurement_comments
+	String comments
 	String file_format
-	Prompt measurement_persons, "Enter the measurement person(s):"
-	Prompt measurement_comments, "Enter any additional measurement comments:"
-	String format_list = "Richter Lab;Hersam Lab"
-	Prompt file_format, "Choose the file format:", popup, format_list
-	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format
-	if(V_flag==1)
-		return NaN
-	endif
-	NewPath/O/Q folder_path
-	if(V_flag!=0)
-		return NaN
-	endif
+	Variable device_area // cm^-2
+	String original_folder = GetDataFolder(1)
 	// Get list of all txt files in the folder
 	String file_list = IndexedFile(folder_path,-1,".txt")
 	// Filter list for J-V measurement data
@@ -2069,19 +2064,49 @@ Function FEDMS_LoadJVDataFolder()
 	endfor
 	file_list = SortList(file_list,";",16)
 	Variable file_count = ItemsInList(file_list)
-	String sample_name = FEDMS_ChooseSample()
-	if(StringMatch(sample_name,""))
-		return NaN
-	endif
+	//String sample_name = FEDMS_ChooseSample()
+	//if(StringMatch(sample_name,""))
+	//	return NaN
+	//endif
 	// Load data from each file
 	Print "Loading "+num2str(ItemsInList(file_list,";"))+" data files..."
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		file_name = StringFromList(i,file_list,";")
 		PathInfo folder_path
 		String fullpathname = S_path+file_name
-		FEDMS_LoadJVDataFile(sample_name,fullpathname,measurement_persons,measurement_comments,file_format)
+		String sample_name = StringFromList(0,file_name,"_")+"_"+StringFromList(1,file_name,"_")
+		sample_name = RemoveEnding(sample_name)
+		FEDMS_LoadJVDataFile(sample_name,fullpathname,measurement_persons,comments,file_format,device_area)
 	endfor
 	SetDataFolder original_folder
+End
+
+Function FEDMS_LoadJVDataFolderGUI()
+	String original_folder = GetDataFolder(1)
+	String measurement_persons
+	String measurement_comments
+	String file_format
+	Variable device_area = 0
+	Prompt measurement_persons, "Enter the measurement person(s):"
+	Prompt measurement_comments, "Enter any additional measurement comments:"
+	String format_list = "Richter Lab;Hersam Lab"
+	Prompt file_format, "Choose the file format:", popup, format_list
+	Prompt device_area, "Enter the device area (cm^-2):"
+	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format, device_area
+	if(V_flag==1)
+		return NaN
+	endif
+	if(device_area<=0)
+		Print "Error! Invalid device area."
+		return NaN
+	endif
+	NewPath/O/Q folder_path
+	if(V_flag!=0)
+		return NaN
+	endif
+	PathInfo folder_path
+	Print "�FEDMS_LoadJVDataFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+")"
+	FEDMS_LoadJVDataFolder(S_path, measurement_persons, measurement_comments, file_format,device_area)
 End
 
 Function/S FEDMS_LoadSampleTypes()

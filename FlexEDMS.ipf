@@ -360,7 +360,7 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 	J_raw = 1000*current/Device_area_cm2
 	// Separate forward and reverse current sweeps
 	Variable start_point
-	int i
+	Variable i
 	if(voltage[0]<0)
 		start_point = 0
 		for(i=1;i<numpnts(voltage);i+=1)
@@ -531,7 +531,7 @@ Function FEDMS_AnalyzePhotocurrent(device_name,measurement_name)
 	Variable/G J_sat_onset
 	NVAR V_0
 	Variable i
-	for(i=0;i<numpnts(photocurrent);i++)
+	for(i=0;i<numpnts(photocurrent);i+=1)
 		if(abs(mean(photocurrent,pnt2x(photocurrent,i-3),pnt2x(photocurrent,i+3))-fit_photocurrent[i])<0.005*abs(fit_photocurrent[i]))
 			V_sat_onset = pnt2x(photocurrent,i)
 			V_eff_onset = V_0-V_sat_onset
@@ -546,7 +546,7 @@ Function FEDMS_AnalyzePhotocurrent(device_name,measurement_name)
 	J_gen = fit_photocurrent
 	Reverse J_gen
 	// Mirror J_gen for voltages above V_0
-	for(i=0;i<numpnts(J_gen);i++)
+	for(i=0;i<numpnts(J_gen);i+=1)
 		if(pnt2x(J_gen,i)>V_0)
 			J_gen[i] = J_gen(V_0-(pnt2x(J_gen,i)-V_0))
 			if(numtype(J_gen[i])!=0)
@@ -1848,12 +1848,14 @@ Function FEDMS_LoadImpedanceDataFile(sample_name,fullpathname)
 	LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
 	Wave/T wave0
 	// Parse file header for measurement date and time
-	String day = TrimString(StringFromList(0,StringFromList(1,wave0[0],","),"."))
-	String month = TrimString(StringFromList(1,StringFromList(1,wave0[0],","),"."))
-	String year = TrimString(StringFromList(2,StringFromList(1,wave0[0],","),"."))
+	String date_str = StringFromList(2,wave0[0]," ")
+	date_str = RemoveEnding(date_str)
+	String day = StringFromList(0,date_str,".")
+	String month = StringFromList(1,date_str,".")
+	String year = StringFromList(2,date_str,".")
 	String/G Measurement_date = month+"/"+day+"/"+year
-	String/G Measurement_time = TrimString(StringFromList(2,wave0[0],","))
-	Variable/G Amplitude = str2num(TrimString(StringFromList(1,wave0[1],"=")))
+	String/G Measurement_time = (StringFromList(3,wave0[0]," "))
+	Variable/G Amplitude = str2num(StringFromList(1,wave0[1],"="))
 	// Load Data Waves
 	LoadWave/A/J/D/Q/O/K=0/L={2,3,0,0,0} fullpathname
 	// Load dark frequency sweep data
@@ -1944,11 +1946,12 @@ Function FEDMS_LoadImpedanceDataFolder()
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments)
+Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_format)
 	String sample_name
 	String fullpathname
 	String persons
 	String comments
+	String file_format
 	// Parse filename from full pathname
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
 	// Parse filename to extract device name
@@ -1989,16 +1992,32 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments)
 		endif
 	endif
 	NewDataFolder/O/S $measurement_name
-	// Load file into text wave
-	LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
-	Wave/T wave0
-	// Parse file header for measurement date and time
-	String/G Measurement_date = StringFromList(1,StringFromList(1,wave0[0],";"),":")
-	String/G Measurement_time = TrimString(StringFromList(2,wave0[0],";"))
-	// Load Data Waves
-	LoadWave/A/J/D/Q/O/K=0/L={1,2,0,0,0} fullpathname
-	Duplicate/O $("wave1") voltage
-	Duplicate/O $("wave2") current
+	if(StringMatch(file_format,"Richter Lab"))
+		// Load file into text wave
+		LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
+		Wave/T wave0
+		// Parse file header for measurement date and time
+		String/G Measurement_date = StringFromList(1,StringFromList(1,wave0[0],";"),":")
+		String am_pm = StringFromList(4,wave0[0]," ")
+		am_pm = RemoveEnding(am_pm)
+		String time_str = StringFromList(3,wave0[0]," ")
+		if(StringMatch(am_pm,"PM"))
+			Variable hour = str2num(StringFromList(0,time_str,":"))
+			String minute_str = StringFromList(1,time_str,":")
+			hour += 12
+			time_str = num2str(hour)+":"+minute_str
+		endif
+		String/G Measurement_time = time_str
+		// Load Data Waves
+		LoadWave/A/J/D/Q/O/K=0/L={1,2,0,0,0} fullpathname
+		Duplicate/O $("wave1") voltage
+		Duplicate/O $("wave2") current
+	else
+		// Load Data Waves
+		LoadWave/A/J/D/Q/O/K=0/L={0,1,0,0,0} fullpathname
+		Duplicate/O $("wave1") voltage
+		Duplicate/O $("wave0") current
+	endif
 	// Check for inverted measurement
 	Duplicate voltage voltage_abs
 	voltage_abs = abs(voltage)
@@ -2016,9 +2035,12 @@ Function FEDMS_LoadJVDataFolder()
 	String original_folder = GetDataFolder(1)
 	String measurement_persons
 	String measurement_comments
+	String file_format
 	Prompt measurement_persons, "Enter the measurement person(s):"
 	Prompt measurement_comments, "Enter any additional measurement comments:"
-	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments
+	String format_list = "Richter Lab;Hersam Lab"
+	Prompt file_format, "Choose the file format:", popup, format_list
+	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format
 	if(V_flag==1)
 		return NaN
 	endif
@@ -2057,7 +2079,7 @@ Function FEDMS_LoadJVDataFolder()
 		file_name = StringFromList(i,file_list,";")
 		PathInfo folder_path
 		String fullpathname = S_path+file_name
-		FEDMS_LoadJVDataFile(sample_name,fullpathname,measurement_persons,measurement_comments)
+		FEDMS_LoadJVDataFile(sample_name,fullpathname,measurement_persons,measurement_comments,file_format)
 	endfor
 	SetDataFolder original_folder
 End
@@ -2613,7 +2635,7 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[0]):
 	Display /W=(626.25,39.5,1076.25,365) $("photocurrent") vs $("voltage_effective")
 	// Append the rest of the photocurrent curves
-	int i
+	Variable i
 	for(i=1;i<numpnts(illuminations);i+=1)
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i]):
 		AppendToGraph $("photocurrent") vs $("voltage_effective")

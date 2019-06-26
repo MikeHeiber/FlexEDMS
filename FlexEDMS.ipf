@@ -23,12 +23,12 @@ Menu "FlexEDMS"
 		"Plot ToF Temperature Dependence", /Q, FEDMS_PlotTOF_TempDependence()
 	End
 	Submenu "J-V"
-		"Load J-V Data Folder", /Q, FEDMS_LoadJVDataFolderGUI()
+		"Load J-V Data Folder", /Q, FEDMS_LoadJVFolderGUI()
 		"Plot J-V Data", /Q, FEDMS_PlotJV()
 	End
 	Submenu "IPDA"
-		"Load J-V Data Folder", /Q, FEDMS_LoadJVDataFolderGUI()
-		"Load Impedance Data Folder", /Q, FEDMS_LoadImpedanceDataFolder()
+		"Load J-V Data Folder", /Q, FEDMS_LoadJVFolderGUI()
+		"Load Impedance Data Folder", /Q, FEDMS_LoadImpedanceFolderGUI()
 		"Plot Photocurrent Data", /Q, FEDMS_PlotPhotocurrent()
 	End
 End
@@ -1811,9 +1811,10 @@ Function FEDMS_FitMobilityField(w,F_sqrt) : FitFunc
 	return w[0]*exp(w[1]*F_sqrt)
 End
 
-Function FEDMS_LoadImpedanceDataFile(sample_name,fullpathname)
+Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format)
 	String sample_name
 	String fullpathname
+	String file_format
 	// Parse filename from full pathname
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
 	// Parse filename to extract device name
@@ -1827,9 +1828,11 @@ Function FEDMS_LoadImpedanceDataFile(sample_name,fullpathname)
 		return NaN
 	endif
 	String original_folder = GetDataFolder(1)
-	SetDataFolder root:FlexEDMS:$(sample_name)
+	NewDataFolder/S/O root:FlexEDMS:$(sample_name)
 	// Parse filename to extract measurement conditions
+	String measurement_type = StringFromList(2,filename,"_")
 	String measurement_name = StringFromList(3,filename,"_")
+	measurement_name = RemoveEnding(measurement_name,".txt")
 	// Create Subfolders
 	String device_letter = file_device_name[strlen(file_device_name)-1]
 	NewDataFolder/O/S $device_letter
@@ -1850,110 +1853,161 @@ Function FEDMS_LoadImpedanceDataFile(sample_name,fullpathname)
 			endif
 		endif
 	endif
-	NewDataFolder/O/S $measurement_name
-	// Load file into text wave
-	LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
-	Wave/T wave0
-	// Parse file header for measurement date and time
-	String date_str = StringFromList(2,wave0[0]," ")
-	date_str = RemoveEnding(date_str)
-	String day = StringFromList(0,date_str,".")
-	String month = StringFromList(1,date_str,".")
-	String year = StringFromList(2,date_str,".")
-	String/G Measurement_date = month+"/"+day+"/"+year
-	String/G Measurement_time = (StringFromList(3,wave0[0]," "))
-	Variable/G Amplitude = str2num(StringFromList(1,wave0[1],"="))
-	// Load Data Waves
-	LoadWave/A/J/D/Q/O/K=0/L={2,3,0,0,0} fullpathname
-	// Load dark frequency sweep data
-	if(StringMatch(measurement_name,"DARK"))
-		// Split into multiple waves based on the dc bias
-		// Create list of biases tested
+	if(StringMatch(measurement_type,"*Cf*"))
+		NewDataFolder/O/S $("Cf_"+measurement_name)
+	elseif(StringMatch(measurement_type,"*CV*"))
+	NewDataFolder/O/S $("CV_"+measurement_name)
+	endif
+	if(StringMatch(file_format,"Richter Lab"))
+		// Load file into text wave
+		LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
+		Wave/T wave0
+		// Parse file header for measurement date and time
+		String date_str = StringFromList(2,wave0[0]," ")
+		date_str = RemoveEnding(date_str)
+		String day = StringFromList(0,date_str,".")
+		String month = StringFromList(1,date_str,".")
+		String year = StringFromList(2,date_str,".")
+		String/G Measurement_date = month+"/"+day+"/"+year
+		String/G Measurement_time = (StringFromList(3,wave0[0]," "))
+		Variable/G Amplitude_V = str2num(StringFromList(1,wave0[1],"="))
+		// Load Data Waves
+		LoadWave/A/J/Q/O/K=0/L={2,3,0,0,0} fullpathname
+		// Load C-f scan data
+		if(StringMatch(measurement_type,"*Cf*"))
+			// Split into multiple waves based on the dc bias
+			// Create list of biases tested
+			Wave wave2
+			Make/N=0/O voltage_list
+			Make/N=0/O start_index_list
+			Make/N=0/O end_index_list
+			Variable i
+			Variable current_val = wave2[0]
+			voltage_list[0] = {current_val}
+			start_index_list[0] = {0}
+			for(i=1;i<numpnts(wave2);i+=1)
+				if(wave2[i]!=current_val)
+					current_val = wave2[i]
+					end_index_list[numpnts(end_index_list)] = {i-1}
+					start_index_list[numpnts(start_index_list)] = {i}
+					voltage_list[numpnts(voltage_list)] = {current_val}
+				endif
+			endfor
+			end_index_list[numpnts(end_index_list)] = {numpnts(wave2)-1}
+			// Split the temporary waves
+			Duplicate/O/R=[start_index_list[0],end_index_list[0]] $("wave1") frequency
+			Reverse frequency
+			SetScale/I x 0,numpnts(frequency)-1,"", frequency
+			for(i=0;i<numpnts(voltage_list);i+=1)
+				Duplicate/O/R=[start_index_list[i],end_index_list[i]] $("wave3") $("Z_real_"+num2str(voltage_list[i])+"V")
+				Duplicate/O/R=[start_index_list[i],end_index_list[i]] $("wave4") $("Z_imag_"+num2str(voltage_list[i])+"V")
+				Reverse $("Z_real_"+num2str(voltage_list[i])+"V")
+				SetScale/I x 0,numpnts(frequency)-1,"", $("Z_real_"+num2str(voltage_list[i])+"V")
+				Reverse $("Z_imag_"+num2str(voltage_list[i])+"V")
+				SetScale/I x 0,numpnts(frequency)-1,"", $("Z_imag_"+num2str(voltage_list[i])+"V")
+			endfor
+		// Load C-V scan data
+		elseif(StringMatch(measurement_type,"*CV*"))
+			Variable/G Freq = str2num(StringFromList(0,StringFromList(1,wave0[1],"=")," "))
+			Duplicate/O $("wave1") voltage_applied
+			Duplicate/O $("wave2") Z_real
+			Duplicate/O $("wave3") Z_imag
+		endif
+	elseif(StringMatch(file_format,"Hersam Lab"))
+		// Load file into text wave
+		LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
+		Wave/T wave0
+		// Parse file header for measurement date and time
+		date_str = StringFromList(ItemsInList(wave0[3]," ")-1,wave0[3]," ")
+		date_str = ReplaceString("-",date_str,"/")
+		String/G Measurement_date = date_str
+		String/G Measurement_time = StringFromList(ItemsInList(wave0[4]," ")-1,wave0[4]," ")
+		// Find end of header section
+		FindValue/TEXT="End Comments" wave0
+		Variable data_start_index = V_value+1
+		// Load Data Waves
+		LoadWave/A/J/D/Q/O/K=0/L={data_start_index-2,data_start_index,0,0,0} fullpathname
 		Wave wave2
-		Make/D/N=0/O voltage_list
-		Make/D/N=0/O start_index_list
-		Make/D/N=0/O end_index_list
-		Variable i
-		Variable current_val = wave2[0]
-		voltage_list[0] = {current_val}
-		start_index_list[0] = {0}
-		for(i=1;i<numpnts(wave2);i+=1)
-			if(wave2[i]!=current_val)
-				current_val = wave2[i]
-				end_index_list[numpnts(end_index_list)] = {i-1}
-				start_index_list[numpnts(start_index_list)] = {i}
-				voltage_list[numpnts(voltage_list)] = {current_val}
-			endif
-		endfor
-		end_index_list[numpnts(end_index_list)] = {numpnts(wave2)-1}
-		// Split the temporary waves
-		Duplicate/O/R=[start_index_list[0],end_index_list[0]] $("wave1") frequency
-		Reverse frequency
-		SetScale/I x 0,numpnts(frequency)-1,"", frequency
-		for(i=0;i<numpnts(voltage_list);i+=1)
-			Duplicate/O/R=[start_index_list[i],end_index_list[i]] $("wave3") $("Z_real_"+num2str(voltage_list[i])+"V")
-			Duplicate/O/R=[start_index_list[i],end_index_list[i]] $("wave4") $("Z_imag_"+num2str(voltage_list[i])+"V")
-			Reverse $("Z_real_"+num2str(voltage_list[i])+"V")
-			SetScale/I x 0,numpnts(frequency)-1,"", $("Z_real_"+num2str(voltage_list[i])+"V")
-			Reverse $("Z_imag_"+num2str(voltage_list[i])+"V")
-			SetScale/I x 0,numpnts(frequency)-1,"", $("Z_imag_"+num2str(voltage_list[i])+"V")
-		endfor
-	// Load illumination bias scans
-	else
-		Variable/G Freq = str2num(StringFromList(0,StringFromList(1,wave0[1],"=")," "))
-		Duplicate/O $("wave1") voltage_applied
-		Duplicate/O $("wave2") Z_real
-		Duplicate/O $("wave3") Z_imag
+		Variable/G Amplitude_V = wave2[0]
+		// Load dark C-f scan data
+		if(StringMatch(measurement_type,"*Cf*"))
+			// Split into multiple waves based on the dc bias
+			// Create list of biases tested
+			Wave wave2, wave3
+			Make/N=0/O voltage_list
+			voltage_list[0] = {wave3[0]}
+			Duplicate/O $("wave1") frequency
+			Duplicate/O $("wave5") $("Z_real_"+num2str(voltage_list[0])+"V")
+			Duplicate/O $("wave6") $("Z_imag_"+num2str(voltage_list[0])+"V")
+		// Load C-V scan data
+		elseif(StringMatch(measurement_type,"*CV*"))
+			Variable/G Freq = str2num(StringFromList(0,StringFromList(1,wave0[1],"=")," "))
+			Duplicate/O $("wave3") voltage_applied
+			Duplicate/O $("wave5") Z_real
+			Duplicate/O $("wave6") Z_imag
+		endif
 	endif
 	// Clean up
-	KillWaves/Z $"wave0", $"wave1", $"wave2", $"wave3", $"wave4", voltage_list, start_index_list, end_index_list
+	KillWaves/Z $"wave0", $"wave1", $"wave2", $"wave3", $"wave4", $"wave5", $"wave6", $"wave7", $"wave8", $"wave9"
+	KillWaves/Z voltage_list, start_index_list, end_index_list
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadImpedanceDataFolder()
-	String original_folder = GetDataFolder(1)
+Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file_format)
+	String path_str
 	String measurement_persons
-	String measurement_comments
-	Prompt measurement_persons, "Enter the measurement person(s):"
-	Prompt measurement_comments, "Enter any additional measurement comments:"
-	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments
-	if(V_flag==1)
-		return NaN
-	endif
-	NewPath/O/Q folder_path
-	if(V_flag==1)
-		return NaN
-	endif
+	String comments
+	String file_format
+	String original_folder = GetDataFolder(1)
 	// Get list of all txt files in the folder
+	NewPath/O/Q folder_path, path_str
 	String file_list = IndexedFile(folder_path,-1,".txt")
 	// Filter list for J-V measurement data
 	Variable i
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		String file_name = StringFromList(i,file_list,";")
 		// Filter out non-impedance files
-		if(!StringMatch(file_name,"*IMPEDANCE*"))
+		if(!StringMatch(file_name,"*impedance*"))
 			file_list = RemoveListItem(i,file_list)
 			i -= 1
 		endif
 	endfor
 	file_list = SortList(file_list,";",16)
 	Variable file_count = ItemsInList(file_list)
-	String sample_name = FEDMS_ChooseSample()
-	if(StringMatch(sample_name,""))
-		return NaN
-	endif
 	// Load data from each file
 	Print "Loading "+num2str(ItemsInList(file_list,";"))+" data files..."
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		file_name = StringFromList(i,file_list,";")
-		PathInfo folder_path
-		String fullpathname = S_path+file_name
-		FEDMS_LoadImpedanceDataFile(sample_name,fullpathname)
+		String fullpathname = path_str+file_name
+		String sample_name = StringFromList(0,file_name,"_")+"_"+StringFromList(1,file_name,"_")
+		sample_name = RemoveEnding(sample_name)
+		FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format)
 	endfor
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_format,device_area)
+Function FEDMS_LoadImpedanceFolderGUI()
+	String measurement_persons
+	String measurement_comments
+	Prompt measurement_persons, "Enter the measurement person(s):"
+	Prompt measurement_comments, "Enter any additional measurement comments:"
+	String file_format
+	String format_list = "Richter Lab;Hersam Lab"
+	Prompt file_format, "Choose the file format:", popup, format_list
+	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format
+	if(V_flag!=0)
+		return NaN
+	endif
+	NewPath/O/Q folder_path
+	if(V_flag!=0)
+		return NaN
+	endif
+	PathInfo folder_path
+	Print "•FEDMS_LoadImpedanceFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\")"
+	FEDMS_LoadImpedanceFolder(S_path, measurement_persons, measurement_comments, file_format)
+End
+
+Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,device_area)
 	String sample_name
 	String fullpathname
 	String persons
@@ -2046,14 +2100,15 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_for
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFolder(folder_path, measurement_persons, comments, file_format, device_area)
-	String folder_path
+Function FEDMS_LoadJVFolder(path_str, measurement_persons, comments, file_format, device_area)
+	String path_str
 	String measurement_persons
 	String comments
 	String file_format
-	Variable device_area // cm^-2
+	Variable device_area // cm^2
 	String original_folder = GetDataFolder(1)
 	// Get list of all txt files in the folder
+	NewPath/O/Q folder_path , path_str
 	String file_list = IndexedFile(folder_path,-1,".txt")
 	// Filter list for J-V measurement data
 	Variable i
@@ -2082,16 +2137,15 @@ Function FEDMS_LoadJVDataFolder(folder_path, measurement_persons, comments, file
 	Print "Loading "+num2str(ItemsInList(file_list,";"))+" data files..."
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		file_name = StringFromList(i,file_list,";")
-		PathInfo folder_path
-		String fullpathname = S_path+file_name
+		String fullpathname = path_str+file_name
 		String sample_name = StringFromList(0,file_name,"_")+"_"+StringFromList(1,file_name,"_")
 		sample_name = RemoveEnding(sample_name)
-		FEDMS_LoadJVDataFile(sample_name,fullpathname,measurement_persons,comments,file_format,device_area)
+		FEDMS_LoadJVFile(sample_name,fullpathname,measurement_persons,comments,file_format,device_area)
 	endfor
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVDataFolderGUI()
+Function FEDMS_LoadJVFolderGUI()
 	String original_folder = GetDataFolder(1)
 	String measurement_persons
 	String measurement_comments
@@ -2115,8 +2169,8 @@ Function FEDMS_LoadJVDataFolderGUI()
 		return NaN
 	endif
 	PathInfo folder_path
-	Print "•FEDMS_LoadJVDataFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+")"
-	FEDMS_LoadJVDataFolder(S_path, measurement_persons, measurement_comments, file_format,device_area)
+	Print "•FEDMS_LoadJVFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+")"
+	FEDMS_LoadJVFolder(S_path, measurement_persons, measurement_comments, file_format,device_area)
 End
 
 Function/S FEDMS_LoadSampleTypes()

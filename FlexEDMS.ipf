@@ -342,8 +342,9 @@ Function FEDMS_AnalyzeImpedanceData(device_name,[show_graphs])
 	SetDataFolder original_data_folder
 End
 
-Function FEDMS_AnalyzeJV(device_name,measurement_name)
+Function FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 	String device_name
+	String measurement_type
 	String measurement_name
 	String original_data_folder = GetDataFolder(1)
 	String substrate_num = RemoveEnding(device_name)
@@ -353,11 +354,17 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 	NVAR Device_area_cm2
 	NVAR Active_thickness_cm
 	// Analyze the designated JV measurement
-	SetDataFolder :$(device_num):JV:$measurement_name
+	SetDataFolder :$(device_num):$(measurement_type):
+	NVAR Mismatch_factor
+	SetDataFolder $measurement_name
 	Wave voltage
 	Wave current
 	Duplicate/O current J_raw
-	J_raw = 1000*current/Device_area_cm2
+	if(StringMatch(measurement_name,"*dark*"))
+		J_raw = 1000*current/(Device_area_cm2)
+	else
+		J_raw = 1000*current/(Device_area_cm2*Mismatch_factor)
+	endif
 	// Separate forward and reverse current sweeps
 	Variable start_point
 	Variable voltage_start1
@@ -441,11 +448,11 @@ Function FEDMS_AnalyzeJVIntensity(device_name)
 	Variable i
 	for(i=0;i<numpnts(illuminations);i+=1)
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i]):
-		FEDMS_AnalyzeJV(device_name,illuminations[i])
+		FEDMS_AnalyzeJV(device_name,"JV",illuminations[i])
 		FEDMS_CalculatePhotocurrent(device_name,illuminations[i])
 		NVAR V_0
 		Wave photocurrent
-		J_sat[i] = photocurrent(V_0-4)
+		J_sat[i] = photocurrent(V_0-2)
 	endfor
 	I_suns_wave = J_sat/J_sat[index_1sun]
 	intensities = 100*I_suns_wave
@@ -1411,15 +1418,15 @@ Function FEDMS_CalculatePhotocurrent(device_name,measurement_name)
 	// Calculate photocurrent
 	// Get appropriate dark current data
 	if(StringMatch(measurement_name,"*LED*"))
-		FEDMS_AnalyzeJV(device_name,"LEDdark")
+		FEDMS_AnalyzeJV(device_name,"JV","LEDdark")
 		SetDataFolder :LEDdark
 	else
-		FEDMS_AnalyzeJV(device_name,"dark")
+		FEDMS_AnalyzeJV(device_name,"JV","dark")
 		SetDataFolder :dark
 	endif
 	Wave J_dark = $("J_avg")
 	// Get the light current data
-	FEDMS_AnalyzeJV(device_name,measurement_name)
+	FEDMS_AnalyzeJV(device_name,"JV",measurement_name)
 	SetDataFolder ::$measurement_name
 	Wave J_light = $("J_avg")
 	Duplicate/O J_light photocurrent
@@ -2007,13 +2014,14 @@ Function FEDMS_LoadImpedanceFolderGUI()
 	FEDMS_LoadImpedanceFolder(S_path, measurement_persons, measurement_comments, file_format)
 End
 
-Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,device_area)
+Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,device_area,mismatch)
 	String sample_name
 	String fullpathname
 	String persons
 	String comments
 	String file_format
 	Variable device_area
+	Variable mismatch
 	// Parse filename from full pathname
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
 	// Parse filename to extract device name
@@ -2031,14 +2039,16 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 	NewDataFolder/O/S root:FlexEDMS:$(sample_name)
 	Variable/G Device_area_cm2 = device_area
 	// Parse filename to extract measurement conditions
+	String measurement_type = RemoveEnding(StringFromList(2,filename,"_"),".txt")
 	String measurement_name = RemoveEnding(StringFromList(3,filename,"_"),".txt")
 	// Create Subfolders
 	String device_letter = file_device_name[strlen(file_device_name)-1]
 	NewDataFolder/O/S $device_letter
-	NewDataFolder/O/S $"JV"
+	NewDataFolder/O/S $measurement_type
 	// Enter measurement info
 	String/G Measurement_persons = persons
 	String/G Measurement_comments = comments
+	Variable/G Mismatch_factor = mismatch
 	// If not a dark measurement, add to illuminations wave
 	if(!StringMatch(measurement_name,"*dark*"))
 		Wave/T illuminations
@@ -2100,12 +2110,13 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadJVFolder(path_str, measurement_persons, comments, file_format, device_area)
+Function FEDMS_LoadJVFolder(path_str, measurement_persons, comments, file_format, device_area,mismatch_factor)
 	String path_str
 	String measurement_persons
 	String comments
 	String file_format
 	Variable device_area // cm^2
+	Variable mismatch_factor
 	String original_folder = GetDataFolder(1)
 	// Get list of all txt files in the folder
 	NewPath/O/Q folder_path , path_str
@@ -2129,10 +2140,6 @@ Function FEDMS_LoadJVFolder(path_str, measurement_persons, comments, file_format
 	endfor
 	file_list = SortList(file_list,";",16)
 	Variable file_count = ItemsInList(file_list)
-	//String sample_name = FEDMS_ChooseSample()
-	//if(StringMatch(sample_name,""))
-	//	return NaN
-	//endif
 	// Load data from each file
 	Print "Loading "+num2str(ItemsInList(file_list,";"))+" data files..."
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
@@ -2140,7 +2147,7 @@ Function FEDMS_LoadJVFolder(path_str, measurement_persons, comments, file_format
 		String fullpathname = path_str+file_name
 		String sample_name = StringFromList(0,file_name,"_")+"_"+StringFromList(1,file_name,"_")
 		sample_name = RemoveEnding(sample_name)
-		FEDMS_LoadJVFile(sample_name,fullpathname,measurement_persons,comments,file_format,device_area)
+		FEDMS_LoadJVFile(sample_name,fullpathname,measurement_persons,comments,file_format,device_area,mismatch_factor)
 	endfor
 	SetDataFolder original_folder
 End
@@ -2151,12 +2158,14 @@ Function FEDMS_LoadJVFolderGUI()
 	String measurement_comments
 	String file_format
 	Variable device_area = 0
+	Variable mismatch_factor = 1
 	Prompt measurement_persons, "Enter the measurement person(s):"
 	Prompt measurement_comments, "Enter any additional measurement comments:"
 	String format_list = "Richter Lab;Hersam Lab"
 	Prompt file_format, "Choose the file format:", popup, format_list
 	Prompt device_area, "Enter the device area (cm^-2):"
-	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format, device_area
+	Prompt mismatch_factor, "Enter the 1 sun mismatch factor:"
+	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format, device_area, mismatch_factor
 	if(V_flag==1)
 		return NaN
 	endif
@@ -2169,8 +2178,8 @@ Function FEDMS_LoadJVFolderGUI()
 		return NaN
 	endif
 	PathInfo folder_path
-	Print "•FEDMS_LoadJVFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+")"
-	FEDMS_LoadJVFolder(S_path, measurement_persons, measurement_comments, file_format,device_area)
+	Print "•FEDMS_LoadJVFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+","+num2str(mismatch_factor)+")"
+	FEDMS_LoadJVFolder(S_path, measurement_persons, measurement_comments, file_format,device_area,mismatch_factor)
 End
 
 Function/S FEDMS_LoadSampleTypes()
@@ -2664,8 +2673,9 @@ Function FEDMS_PlotTOF_IntensityTest()
 	SetDataFolder original_folder
 End
 
-Function FEDMS_PlotJV(device_name,measurement_name) : Graph
+Function FEDMS_PlotJV(device_name,measurement_type,measurement_name) : Graph
 	String device_name
+	String measurement_type
 	String measurement_name
 	String original_data_folder = GetDataFolder(1)
 	// Parse the device name
@@ -2677,9 +2687,9 @@ Function FEDMS_PlotJV(device_name,measurement_name) : Graph
 		return NaN
 	endif
 	// Analyze the specified J-V measurement
-	FEDMS_AnalyzeJV(device_name,measurement_name)
+	FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 	// Begin plotting the results
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(measurement_name):
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):$(measurement_type):$(measurement_name):
 	Wave J_avg
 	if(StringMatch(measurement_name,"*dark*"))
 		Display $"J_avg_abs"

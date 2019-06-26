@@ -360,6 +360,8 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 	J_raw = 1000*current/Device_area_cm2
 	// Separate forward and reverse current sweeps
 	Variable start_point
+	Variable voltage_start1
+	Variable voltage_start2
 	Variable i
 	if(voltage[0]<0)
 		start_point = 0
@@ -371,20 +373,22 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 		endfor
 		Duplicate/O/R=(0,start_point) J_raw J_forward
 		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_reverse
+		voltage_start1 = round(10000*voltage[0])/10000
+		voltage_start2 = round(10000*voltage[start_point+1])/10000
 	else // Inverted sweep
 		start_point = 0
 		for(i=1;i<numpnts(voltage);i+=1)
-			if(voltage[i-1]-voltage[i]>0.001)
+			if(voltage[i]-voltage[i-1]>0.001)
 				start_point = i-2
 				break
 			endif
 		endfor
 		Duplicate/O/R=(0,start_point) J_raw J_reverse
 		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_forward
+		voltage_start2 = round(10000*voltage[0])/10000
+		voltage_start1 = round(10000*voltage[start_point+1])/10000
 	endif
-	Variable voltage_step = abs(round(100*(voltage[1]-voltage[0]))/100)
-	Variable voltage_start1 = round(100*voltage[0])/100
-	Variable voltage_start2 = round(100*voltage[start_point+1])/100
+	Variable voltage_step = abs(round(10000*(voltage[1]-voltage[0]))/10000)
 	SetScale/P x voltage_start1,voltage_step,"", J_forward
 	SetScale/P x voltage_start2,(voltage_step*-1),"", J_reverse
 	Duplicate/O J_forward J_avg
@@ -411,7 +415,7 @@ Function FEDMS_AnalyzeJV(device_name,measurement_name)
 		CurveFit/N/NTHR=0/W=2/Q line J_avg[0,20] /D
 		Wave W_coef
 		Variable/G/D R_sh = (1000/(W_coef[1]*Device_area_cm2))
-		// Determine series
+		// Determine series resistance
 		WaveStats/Q J_avg
 		index_start = numpnts(J_avg)-5
 		index_end = numpnts(J_avg)-1
@@ -430,7 +434,7 @@ Function FEDMS_AnalyzeJVIntensity(device_name)
 	String device_num = device_name[Strlen(device_name)-1]
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV
 	Wave/T illuminations
-	Make/N=(numpnts(illuminations))/O $("I_suns"), J_sat, intensities, J_scs, V_scs, V_mps, V_ocs, PCEs
+	Make/N=(numpnts(illuminations))/O $("I_suns"), J_sat, intensities, J_scs, V_scs, V_mps, V_ocs, PCEs, FFs
 	Wave I_suns_wave = $("I_suns")
 	FindValue /TEXT="1sun" illuminations
 	Variable index_1sun = V_value
@@ -453,11 +457,13 @@ Function FEDMS_AnalyzeJVIntensity(device_name)
 		NVAR V_mp
 		NVAR V_oc
 		NVAR P_max
+		NVAR FF
 		J_scs[i] = J_sc
 		V_scs[i] = 0
 		V_mps[i] = V_mp
 		V_ocs[i] = V_oc
 		PCEs[i] = 100*P_max/intensities[i]
+		FFs[i] = FF
 	endfor
 	// Calculate slope of ln(I) vs V_oc
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV
@@ -2016,11 +2022,16 @@ Function FEDMS_LoadJVDataFile(sample_name,fullpathname,persons,comments,file_for
 		LoadWave/A/J/D/Q/O/K=0/O/L={1,2,0,0,0} fullpathname
 		Duplicate/O $("wave1") voltage
 		Duplicate/O $("wave2") current
-	else
+	elseif(StringMatch(file_format,"Hersam Lab"))
 		// Load Data Waves
 		LoadWave/A/J/D/Q/O/K=0/O/L={0,1,0,0,0} fullpathname
 		Duplicate/O $("wave1") voltage
 		Duplicate/O $("wave0") current
+		// round voltage values to nearest mV
+		Variable i
+		for(i=0;i<numpnts(voltage);i+=1)
+			voltage[i] = round(voltage[i]*1000)/1000
+		endfor
 	endif
 	// Check for inverted measurement
 	Duplicate voltage voltage_abs
@@ -2617,9 +2628,9 @@ Function FEDMS_PlotJV(device_name,measurement_name) : Graph
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(measurement_name):
 	Wave J_avg
 	if(StringMatch(measurement_name,"*dark*"))
-		Display $"J_avg_abs" vs $"voltage"
+		Display $"J_avg_abs"
 	else
-		Display J_avg vs $"voltage"
+		Display J_avg
 	endif
 	Execute "FEDMS_GraphStyle()"
 	ModifyGraph log=0, zero=1, width=360, margin(left)=36, margin(bottom)=32, margin(right)=10, margin(top)=10

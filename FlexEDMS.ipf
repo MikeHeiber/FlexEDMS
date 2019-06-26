@@ -1811,10 +1811,12 @@ Function FEDMS_FitMobilityField(w,F_sqrt) : FitFunc
 	return w[0]*exp(w[1]*F_sqrt)
 End
 
-Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format)
+Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_area,active_thickness)
 	String sample_name
 	String fullpathname
 	String file_format
+	Variable device_area
+	Variable active_thickness
 	// Parse filename from full pathname
 	String filename = StringFromList(ItemsInList(fullpathname,":")-1,fullpathname,":")
 	// Parse filename to extract device name
@@ -1829,6 +1831,8 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format)
 	endif
 	String original_folder = GetDataFolder(1)
 	NewDataFolder/S/O root:FlexEDMS:$(sample_name)
+	Variable/G Device_area_cm2 = device_area
+	Variable/G Active_thickness_cm = active_thickness
 	// Parse filename to extract measurement conditions
 	String measurement_type = StringFromList(2,filename,"_")
 	String measurement_name = StringFromList(3,filename,"_")
@@ -1953,11 +1957,13 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format)
 	SetDataFolder original_folder
 End
 
-Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file_format)
+Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file_format, device_area, active_thickness)
 	String path_str
 	String measurement_persons
 	String comments
 	String file_format
+	Variable device_area
+	Variable active_thickness
 	String original_folder = GetDataFolder(1)
 	// Get list of all txt files in the folder
 	NewPath/O/Q folder_path, path_str
@@ -1981,7 +1987,7 @@ Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file
 		String fullpathname = path_str+file_name
 		String sample_name = StringFromList(0,file_name,"_")+"_"+StringFromList(1,file_name,"_")
 		sample_name = RemoveEnding(sample_name)
-		FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format)
+		FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_area,active_thickness)
 	endfor
 	SetDataFolder original_folder
 End
@@ -1989,12 +1995,16 @@ End
 Function FEDMS_LoadImpedanceFolderGUI()
 	String measurement_persons
 	String measurement_comments
+	String file_format
+	Variable device_area
+	Variable active_thickness
 	Prompt measurement_persons, "Enter the measurement person(s):"
 	Prompt measurement_comments, "Enter any additional measurement comments:"
-	String file_format
 	String format_list = "Richter Lab;Hersam Lab"
 	Prompt file_format, "Choose the file format:", popup, format_list
-	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format
+	Prompt device_area, "Enter the device area (cm^2):"
+	Prompt active_thickness, "Enter the active layer thickness (cm):"
+	DoPrompt "Enter Measurement Info", measurement_persons, measurement_comments, file_format, device_area, active_thickness
 	if(V_flag!=0)
 		return NaN
 	endif
@@ -2002,9 +2012,17 @@ Function FEDMS_LoadImpedanceFolderGUI()
 	if(V_flag!=0)
 		return NaN
 	endif
+	if(device_area<=0)
+		Print "Error! invalid device area entered."
+		return NaN
+	endif
+	if(device_area<=0)
+		Print "Error! invalid active layer thickness entered."
+		return NaN
+	endif
 	PathInfo folder_path
-	Print "•FEDMS_LoadImpedanceFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\")"
-	FEDMS_LoadImpedanceFolder(S_path, measurement_persons, measurement_comments, file_format)
+	Print "•FEDMS_LoadImpedanceFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+","+num2str(active_thickness)+")"
+	FEDMS_LoadImpedanceFolder(S_path, measurement_persons, measurement_comments, file_format,device_area,active_thickness)
 End
 
 Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,device_area)
@@ -2027,7 +2045,6 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 		return NaN
 	endif
 	String original_folder = GetDataFolder(1)
-	NewDataFolder/O root:FlexEDMS
 	NewDataFolder/O/S root:FlexEDMS:$(sample_name)
 	Variable/G Device_area_cm2 = device_area
 	// Parse filename to extract measurement conditions

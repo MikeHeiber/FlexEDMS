@@ -49,7 +49,7 @@ Function FEDMS_AnalyzeCapacitanceData(device_name,[show_graphs])
 	Variable i
 	for(i=0;i<numpnts(illuminations);i+=1)
 		FEDMS_CalculateCarrierDensity(device_name,illuminations[i])
-		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(illuminations[i])
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i])
 		Wave carrier_density
 		Wave voltage_applied
 		Wave voltage_cor
@@ -95,6 +95,8 @@ Function FEDMS_AnalyzeCapacitanceData(device_name,[show_graphs])
 	endfor
 	// Plot calculated charge carrier density graphs
 	FEDMS_PlotCarrierDensityVsBias(device_name)
+	SetAxis bottom 0.2,*
+	SetAxis left 1e15,*
 	// Determine if any illuminations should be rejected from further analysis
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave rejection_mask
@@ -403,9 +405,10 @@ Function FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 	Variable voltage_step = abs(round(10000*(voltage[1]-voltage[0]))/10000)
 	SetScale/P x voltage_start1,voltage_step,"", J_forward
 	SetScale/P x voltage_start2,(voltage_step*-1),"", J_reverse
+	Reverse J_reverse
 	Duplicate/O J_forward J_avg
 	for(i=0;i<numpnts(J_avg);i+=1)
-		J_avg[i] = (J_forward[i] + J_reverse(pnt2x(J_forward,i)))/2
+		J_avg[i] = (J_forward[i] + J_reverse[i])/2
 	endfor
 	// Determine light J-V characteristics
 	Variable index_start, index_end
@@ -424,12 +427,12 @@ Function FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 		Duplicate/O J_avg J_avg_abs
 		J_avg_abs = abs(J_avg)
 		// Determine shunt resistance
-		CurveFit/N/NTHR=0/W=2/Q line J_avg[0,20] /D
+		CurveFit/N/NTHR=0/W=2/Q line J_avg[x2pnt(J_avg,-0.2),x2pnt(J_avg,0.2)] /D
 		Wave W_coef
 		Variable/G/D R_sh = (1000/(W_coef[1]*Device_area_cm2))
 		// Determine series resistance
 		WaveStats/Q J_avg
-		index_start = numpnts(J_avg)-5
+		index_start = numpnts(J_avg)-4
 		index_end = numpnts(J_avg)-1
 		CurveFit/N/NTHR=0/W=2/Q line J_avg[index_start,index_end] /D
 		Variable/G R_s = (1000/(W_coef[1]*Device_area_cm2))
@@ -1121,7 +1124,7 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 	Wave fit_photocurrent
 	Wave voltage_effective
 	// Get impedance data
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(measurement_name):
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name):
 	Wave C_mu
 	Wave voltage_cor
 	Wave voltage_applied
@@ -1297,7 +1300,7 @@ Function FEDMS_CalculateIPDAResults(device_name)
 	// Gather device information
 	NVAR Device_area_cm2
 	NVAR Active_thickness_cm
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:DARK
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:Cf_dark
 	NVAR epsilon
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
@@ -1327,7 +1330,7 @@ Function FEDMS_CalculateIPDAResults(device_name)
 		NVAR V_oc
 		NVAR P_max
 		NVAR I_suns_val = $("I_suns")
-		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(illuminations[i])
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i])
 		NVAR n_mp
 		Wave voltage_applied
 		Wave voltage_cor
@@ -1383,7 +1386,7 @@ Function FEDMS_CalculateIPDAResults(device_name)
 		if(rejection_mask[i]==1)
 			continue
 		endif
-		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:LEDdark
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:dark
 		NVAR R_s
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i])
 		NVAR V_0
@@ -1391,7 +1394,7 @@ Function FEDMS_CalculateIPDAResults(device_name)
 		Duplicate/O J_gen, $"J_br_nfg", $"J_nfg"
 		Wave J_br_nfg
 		Wave J_nfg
-		Variable J_gen_nfg = J_gen(V_0-3)
+		Variable J_gen_nfg = J_gen(V_0-2)
 		Variable j
 		for(j=0;j<numpnts(J_gen);j+=1)
 			Make/N=(numpnts(I_suns))/O gen_wave, br_wave
@@ -2065,7 +2068,8 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 		return NaN
 	endif
 	String original_folder = GetDataFolder(1)
-	NewDataFolder/O/S root:FlexEDMS:$(sample_name)
+	NewDataFolder/O/S root:FlexEDMS
+	NewDataFolder/O/S $(sample_name)
 	Variable/G Device_area_cm2 = device_area
 	// Parse filename to extract measurement conditions
 	String measurement_type = RemoveEnding(StringFromList(2,filename,"_"),".txt")
@@ -2415,11 +2419,11 @@ Function FEDMS_PlotCapacitanceVsBias(device_name) : Graph
 	String device_num = device_name[Strlen(device_name)-1]
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
-	SetDataFolder :$(illuminations[0]):
+	SetDataFolder :$("CV_"+illuminations[0]):
 	Display/N=$("Capacitance_Data_"+device_name) $("C_mu") vs $("voltage_cor")
 	Variable i
 	for(i=1;i<numpnts(illuminations);i+=1)
-		SetDataFolder ::$(illuminations[i]):
+		SetDataFolder ::$("CV_"+illuminations[i]):
 		AppendToGraph $("C_mu") vs $("voltage_cor")
 	endfor
 	Execute "FEDMS_GraphStyle()"
@@ -2447,7 +2451,7 @@ Function FEDMS_PlotCarrierDensityVsBias(device_name) : Graph
 	Wave/T illuminations
 	Variable i
 	for(i=0;i<numpnts(illuminations);i+=1)
-		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(illuminations[i]):
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i]):
 		if(i==0)
 			Display/W=(506.4,240.2,744,408.8)/N=$("Bias_Carrier_Density_"+device_name) $("carrier_density") vs $("voltage_applied")
 		else
@@ -2470,7 +2474,7 @@ Function FEDMS_PlotCarrierDensityVsBias(device_name) : Graph
 	TextBox/C/N=text0/F=0/A=MT/X=0/Y=6 device_name
 	Label left "Charge Carrier Density (cm\\S-3\\M)"
 	Label bottom "Voltage (V)"
-	SetAxis/A=2 left
+	SetAxis left 1e14,*
 	SetAxis bottom -1,*
 	// Add legend
 	Legend/C/N=text1/J/F=0/A=LT "\\s(carrier_density) "+illuminations[0]
@@ -2721,15 +2725,17 @@ Function FEDMS_PlotJV(device_name,measurement_type,measurement_name) : Graph
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):$(measurement_type):$(measurement_name):
 	Wave J_avg
 	if(StringMatch(measurement_name,"*dark*"))
-		Display $"J_avg_abs"
+		Display /W=(8.25,46.25,414,339.5) $"J_avg_abs"
 	else
-		Display J_avg
+		Display  /W=(426.75,46.25,832.5,339.5) J_avg
 	endif
 	Execute "FEDMS_GraphStyle()"
 	ModifyGraph log=0, zero=1, width=360, margin(left)=36, margin(bottom)=32, margin(right)=10, margin(top)=10
 	// Custom formatting for dark J-V plots
 	if(StringMatch(measurement_name,"*dark*"))
+		NVAR R_s, R_sh
 		ModifyGraph log(left)=1
+		TextBox/C/N=text1/F=0/A=MC ("R_s = "+num2str(R_s)+" Ohm \rR_sh = "+num2str(R_sh)+" Ohm")
 	// Custom formatting for light J-V plots
 	else
 		NVAR J_sc, V_oc, P_max, FF

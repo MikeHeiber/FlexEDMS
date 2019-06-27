@@ -115,7 +115,7 @@ Function FEDMS_AnalyzeCapacitanceData(device_name,[show_graphs])
 	SetDataFolder original_data_folder
 End
 
-Function FEDMS_AnalyzeDarkImpedance(device_name,[show_graphs])
+Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 	String device_name
 	Variable show_graphs
 	String original_data_folder = GetDataFolder(1)
@@ -126,46 +126,51 @@ Function FEDMS_AnalyzeDarkImpedance(device_name,[show_graphs])
 	NVAR Device_area_cm2
 	NVAR Active_thickness_cm
 	// Determine the AC series resistance from the dark impedance data
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:DARK
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:Cf_dark
 	Wave frequency
 	String wave_list = WaveList("Z_real*",";","")
 	wave_list = SortList(wave_list,";",16)
 	Variable wave_count = ItemsInList(wave_list)
 	Variable x_start = pnt2x(frequency,BinarySearch(frequency,5e5))
 	Variable x_end = pnt2x(frequency,BinarySearch(frequency,5e6))
-	Make/D/N=(wave_count)/O R_s_wave
-	Make/T/N=(wave_count)/O waves
 	// Choose which reverse bias to use for calculating the series resistance
-	Variable i
-	for(i=0;i<wave_count;i+=1)
-		waves[i] = StringFromList(i,wave_list)
+	if(wave_count>1)
+		Make/D/N=(wave_count)/O R_s_wave
+		Make/T/N=(wave_count)/O waves
+		Variable i
+		for(i=0;i<wave_count;i+=1)
+			waves[i] = StringFromList(i,wave_list)
+			Wave Z_real = $(StringFromList(i,wave_list))
+			R_s_wave[i] = Mean(Z_real,x_start,x_end)
+			// Create Graph
+			if(i==0)
+				Display Z_real vs frequency
+			else
+				AppendToGraph Z_real vs frequency
+			endif
+		endfor
+		Execute "FEDMS_GraphStyle()"
+		SetAxis bottom 100000,*
+		SetAxis left 20,200
+		ModifyGraph marker=19,msize=1
+		ModifyGraph useMrkStrokeRGB=0
+		Legend/C/N=text0/F=0/A=LB
+		// Add listbox and button for user input
+		String graph_name = WinName(0,1)
+		DoWindow/C $graph_name
+		ModifyGraph margin(top)=50
+		DrawText 0,0,"\\Z10Select which curve to use to calculate the series resistance."
+		ListBox list0 size={90,20*wave_count},listWave=waves,mode=2
+		Button button0 title="Go",proc=FEDMS_Button_ChooseListItem,size={60,25},fSize=14
+		PauseForUser $graph_name
+		NVAR selection_index
+		Variable/D/G R_s_ac = R_s_wave[selection_index]
+		KillVariables/Z selection_index
+		KillWaves/Z R_s_wave waves
+	else
 		Wave Z_real = $(StringFromList(i,wave_list))
-		R_s_wave[i] = Mean(Z_real,x_start,x_end)
-		// Create Graph
-		if(i==0)
-			Display Z_real vs frequency
-		else
-			AppendToGraph Z_real vs frequency
-		endif
-	endfor
-	Execute "FEDMS_GraphStyle()"
-	SetAxis bottom 100000,*
-	SetAxis left 20,200
-	ModifyGraph marker=19,msize=1
-	ModifyGraph useMrkStrokeRGB=0
-	Legend/C/N=text0/F=0/A=LB
-	// Add listbox and button for user input
-	String graph_name = WinName(0,1)
-	DoWindow/C $graph_name
-	ModifyGraph margin(top)=50
-	DrawText 0,0,"\\Z10Select which curve to use to calculate the series resistance."
-	ListBox list0 size={90,20*wave_count},listWave=waves,mode=2
-	Button button0 title="Go",proc=FEDMS_Button_ChooseListItem,size={60,25},fSize=14
-	PauseForUser $graph_name
-	NVAR selection_index
-	Variable/D/G R_s_ac = R_s_wave[selection_index]
-	KillVariables/Z selection_index
-	KillWaves/Z R_s_wave waves
+		Variable/D/G R_s_ac = Mean(Z_real,x_start,x_end)
+	endif
 	// Calculate the inductance and geometric capacitance from the dark impedance data
 	wave_list = WaveList("Z_imag*",";","")
 	wave_list = SortList(wave_list,";",16)
@@ -250,13 +255,13 @@ Function FEDMS_AnalyzeDarkImpedance(device_name,[show_graphs])
 	// Calculate dielectric constant from the geometric capacitance
 	Variable/G/D epsilon = C_g*Active_thickness_cm/(8.854187e-12*1e-2*Device_area_cm2)
 	// Clean up
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:DARK
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:Cf_dark
 	KillWaves/Z T_Constraints W_coef W_sigma C_g_wave waves 
 	// Restore original working directory
 	SetDataFolder original_data_folder
 End
 
-Function FEDMS_AnalyzeLightImpedance(device_name,measurement_name,[show_graphs])
+Function FEDMS_AnalyzeLightImpedanceCV(device_name,measurement_name,[show_graphs])
 	String device_name
 	String measurement_name
 	Variable show_graphs
@@ -268,14 +273,14 @@ Function FEDMS_AnalyzeLightImpedance(device_name,measurement_name,[show_graphs])
 	NVAR Device_area_cm2
 	NVAR Active_thickness_cm
 	// Gather dark impedance data
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:DARK
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:Cf_dark
 	Wave frequency_dark = $("frequency")
 	Wave capacitance_dark = $("capacitance")
 	if(!WaveExists(capacitance_dark))
 		if(show_graphs==1)
-			FEDMS_AnalyzeDarkImpedance(device_name,show_graphs=1)
+			FEDMS_AnalyzeDarkImpedanceCf(device_name,show_graphs=1)
 		else
-			FEDMS_AnalyzeDarkImpedance(device_name,show_graphs=0)
+			FEDMS_AnalyzeDarkImpedanceCf(device_name,show_graphs=0)
 		endif
 	endif
 	Wave frequency_dark = $("frequency")
@@ -283,18 +288,18 @@ Function FEDMS_AnalyzeLightImpedance(device_name,measurement_name,[show_graphs])
 	NVAR L
 	NVAR R_s_ac
 	// Calculate the capacitance from the light impedance data
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(measurement_name)
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name)
 	Wave voltage_applied
-	Duplicate/O voltage_applied voltage_cor C_mu
+	Duplicate/O voltage_applied voltage_cor C_tot C_mu
 	Wave Z_real
 	Wave Z_imag
 	NVAR Freq
-	C_mu = (-1/(2*PI*Freq))*((Z_imag-2*PI*Freq*L)/((Z_real-R_s_ac)^2+(Z_imag-2*PI*Freq*L)^2))
+	C_tot = (-1/(2*PI*Freq))*((Z_imag-2*PI*Freq*L)/((Z_real-R_s_ac)^2+(Z_imag-2*PI*Freq*L)^2))
 	// Substract the dark capacitance from the light capacitance to determine the chemical capacitance
 	//C_mu -= interp(Freq,frequency_dark,capacitance_dark)
-	C_mu -= Mean(capacitance_dark,pnt2x(capacitance_dark,0),pnt2x(capacitance_dark,4))
+	C_mu = C_tot - Mean(capacitance_dark,pnt2x(capacitance_dark,0),pnt2x(capacitance_dark,4))
 	// Correct the bias for the series resistance
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:LEDdark:
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:dark:
 	Wave J_avg
 	KillVariables/Z R_s_dc
 	NVAR R_s
@@ -305,7 +310,7 @@ Function FEDMS_AnalyzeLightImpedance(device_name,measurement_name,[show_graphs])
 		endif
 	endfor
 	// Clean up from light analysis
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(measurement_name):
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name):
 	// Restore original working directory
 	SetDataFolder original_data_folder
 End
@@ -326,15 +331,15 @@ Function FEDMS_AnalyzeImpedanceData(device_name,[show_graphs])
 	endif
 	// Analyze Impedance data to calculate the chemical capacitance vs corrected bias
 	if(show_graphs==1)
-		FEDMS_AnalyzeDarkImpedance(device_name,show_graphs=1)
-		FEDMS_AnalyzeLightImpedance(device_name,illuminations[0],show_graphs=1)
+		FEDMS_AnalyzeDarkImpedanceCf(device_name,show_graphs=1)
+		FEDMS_AnalyzeLightImpedanceCV(device_name,illuminations[0],show_graphs=1)
 	else
-		FEDMS_AnalyzeDarkImpedance(device_name,show_graphs=0)
-		FEDMS_AnalyzeLightImpedance(device_name,illuminations[0],show_graphs=0)
+		FEDMS_AnalyzeDarkImpedanceCf(device_name,show_graphs=0)
+		FEDMS_AnalyzeLightImpedanceCV(device_name,illuminations[0],show_graphs=0)
 	endif
 	Variable i
 	for(i=1;i<numpnts(illuminations);i+=1)
-		FEDMS_AnalyzeLightImpedance(device_name,illuminations[i])
+		FEDMS_AnalyzeLightImpedanceCV(device_name,illuminations[i])
 	endfor
 	if(show_graphs==1)
 		FEDMS_PlotCapacitanceVsBias(device_name)
@@ -1432,7 +1437,8 @@ Function FEDMS_CalculatePhotocurrent(device_name,measurement_name)
 	Duplicate/O J_light photocurrent
 	photocurrent = -(J_light-J_dark)
 	// Calculate V_0 and the effective voltage waveform
-	FindLevel/Q photocurrent,0
+	WaveStats/Q photocurrent
+	FindLevel/Q/R=(0,pnt2x(photocurrent,V_npnts-1)) photocurrent,0
 	Reverse photocurrent
 	Variable/G/D V_0 = V_LevelX
 	if(numtype(V_0)==2)
@@ -1952,7 +1958,8 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_are
 			Duplicate/O $("wave6") $("Z_imag_"+num2str(voltage_list[0])+"V")
 		// Load C-V scan data
 		elseif(StringMatch(measurement_type,"*CV*"))
-			Variable/G Freq = str2num(StringFromList(0,StringFromList(1,wave0[1],"=")," "))
+			Wave wave1
+			Variable/G Freq = wave1[0]
 			Duplicate/O $("wave3") voltage_applied
 			Duplicate/O $("wave5") Z_real
 			Duplicate/O $("wave6") Z_imag
@@ -1974,7 +1981,12 @@ Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file
 	String original_folder = GetDataFolder(1)
 	// Get list of all txt files in the folder
 	NewPath/O/Q folder_path, path_str
-	String file_list = IndexedFile(folder_path,-1,".txt")
+	String file_list
+	if(StringMatch(file_format,"Richter Lab"))
+		file_list = IndexedFile(folder_path,-1,".txt")
+	elseif(StringMatch(file_format,"Hersam Lab"))
+		file_list = IndexedFile(folder_path,-1,".z")
+	endif
 	// Filter list for J-V measurement data
 	Variable i
 	for(i=0;i<ItemsInList(file_list,";");i+=1)

@@ -156,7 +156,10 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		SetAxis left 20,200
 		ModifyGraph marker=19,msize=1
 		ModifyGraph useMrkStrokeRGB=0
+		Label left "Z_real (Ohm)"
+		Label bottom "Frequency (Hz)"
 		Legend/C/N=text0/F=0/A=LB
+		TextBox/C/N=text1/F=0/A=MT/X=0.00/Y=6.00 "Dark Impedance"
 		// Add listbox and button for user input
 		String graph_name = WinName(0,1)
 		DoWindow/C $graph_name
@@ -171,11 +174,16 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		KillWaves/Z R_s_wave waves
 	else
 		Wave Z_real = $(StringFromList(i,wave_list))
-		Display Z_real vs frequency
-		Execute "FEDMS_GraphStyle()"
-		SetAxis bottom 100000,*
-		SetAxis left 5,200
-		ModifyGraph marker=19,msize=1
+		if(show_graphs==1)
+			Display Z_real vs frequency
+			Execute "FEDMS_GraphStyle()"
+			SetAxis bottom 100000,*
+			SetAxis left 5,200
+			ModifyGraph marker=19,msize=1
+			Label left "Z_real (Ohm)"
+			Label bottom "Frequency (Hz)"	
+			TextBox/C/N=text1/F=0/A=MT/X=0.00/Y=6.00 "Dark Impedance"
+		endif
 		Variable/D/G R_s_ac = Mean(Z_real,x_start,x_end)
 	endif
 	// Calculate the inductance and geometric capacitance from the dark impedance data
@@ -218,7 +226,10 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		SetAxis bottom 500000,*
 		ModifyGraph marker=19,msize=1
 		ModifyGraph useMrkStrokeRGB=0
+		Label left "Z_imag (Ohm)"
+		Label bottom "Frequency (Hz)"	
 		Legend/C/N=text0/F=0/A=LT
+		TextBox/C/N=text1/F=0/A=MT/X=0.00/Y=6.00 "Dark Impedance"
 	endif
 	// Calculate the capacitance from the dark impedance data
 	wave_list = WaveList("Z_real*",";","")
@@ -233,19 +244,29 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		Wave capacitance = $("capacitance_"+bias_ending)
 		Wave Z_imag = $("Z_imag_"+bias_ending)
 		capacitance = (-1/(2*PI*frequency))*((Z_imag-2*PI*frequency*L)/((Z_real-R_s_ac)^2+(Z_imag-2*PI*frequency*L)^2))
-		if(i==0)
-			Display capacitance vs frequency
-		else
-			AppendToGraph capacitance vs frequency
-		endif
 	endfor
-	Execute "FEDMS_GraphStyle()"
-	SetAxis bottom *,*
-	ModifyGraph log(left)=0
-	SetAxis/A=2 left
-	ModifyGraph marker=19,msize=1
-	ModifyGraph useMrkStrokeRGB=0
-	Legend/C/N=text0/F=0/A=LB
+	// Plot the capacitance data
+	if(wave_count>1 || show_graphs==1)
+		for(i=0;i<wave_count;i+=1)
+			bias_ending = StringFromList(2,StringFromList(i,wave_list),"_")
+			Wave capacitance = $("capacitance_"+bias_ending)
+			if(i==0)
+				Display capacitance vs frequency
+			else
+				AppendToGraph capacitance vs frequency
+			endif
+		endfor
+		Execute "FEDMS_GraphStyle()"
+		SetAxis bottom *,*
+		ModifyGraph log(left)=0
+		SetAxis/A=2 left
+		ModifyGraph marker=19,msize=1
+		ModifyGraph useMrkStrokeRGB=0
+		Label left "Capacitance (F)"
+		Label bottom "Frequency (Hz)"	
+		Legend/C/N=text0/F=0/A=LB
+		TextBox/C/N=text1/F=0/A=MT/X=0.00/Y=6.00 "Dark Capacitance"
+	endif
 	// Choose which dark capacitance data to use for further analysis
 	if(wave_count>1)
 		// Add listbox and button for user input
@@ -261,6 +282,7 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		Duplicate/O $waves[selection_index] $("capacitance")
 		KillVariables/Z selection_index
 	else
+		Duplicate/O $waves[0] $("capacitance")
 		Variable/D/G C_g = C_g_wave[0]
 	endif
 	// Calculate dielectric constant from the geometric capacitance
@@ -334,6 +356,22 @@ Function FEDMS_AnalyzeImpedanceData(device_name,[show_graphs])
 	String device_num = device_name[Strlen(device_name)-1]
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
+	Make/N=(numpnts(illuminations))/O intensities
+	// Sort illuminations by intensity
+	FEDMS_AnalyzeJVIntensity(device_name)
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:
+	Wave/T illuminations_JV = $("illuminations")
+	Wave intensities_JV = $("intensities")
+	Variable i, j
+	for(i=0;i<numpnts(illuminations);i+=1)
+		for(j=0;j<numpnts(illuminations_JV);j+=1)
+			if(StringMatch(illuminations[i],illuminations_JV[j]))
+				intensities[i] = intensities_JV[j]
+				break
+			endif
+		endfor
+	endfor
+	Sort intensities, illuminations, intensities
 	Wave rejection_mask
 	if(!WaveExists(rejection_mask))
 		Make/D/N=(numpnts(illuminations))/O $("rejection_mask")
@@ -348,7 +386,6 @@ Function FEDMS_AnalyzeImpedanceData(device_name,[show_graphs])
 		FEDMS_AnalyzeDarkImpedanceCf(device_name,show_graphs=0)
 		FEDMS_AnalyzeLightImpedanceCV(device_name,illuminations[0],show_graphs=0)
 	endif
-	Variable i
 	for(i=1;i<numpnts(illuminations);i+=1)
 		FEDMS_AnalyzeLightImpedanceCV(device_name,illuminations[i])
 	endfor
@@ -519,7 +556,7 @@ Function FEDMS_AnalyzePhotocurrent(device_name,measurement_name)
 	Wave voltage_effective
 	Display photocurrent vs voltage_effective
 	Execute "FEDMS_GraphStyle()"
-	ModifyGraph expand=1.3, log(bottom)=1, rgb[0]=(32768,40777,65535), useMrkStrokeRGB[0]=0
+	ModifyGraph expand=1.2, log(bottom)=1, rgb[0]=(32768,40777,65535), useMrkStrokeRGB[0]=0
 	ModifyGraph log(left)=0
 	SetAxis left 0,*
 	SetAxis bottom 0.04,*
@@ -1876,9 +1913,15 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_are
 			illuminations[0] = measurement_name
 		// Check if illumination value already exists
 		else
-			FindValue/TEXT=measurement_name illuminations
+			Variable item_exists = 0
+			Variable i
+			for(i=0;i<numpnts(illuminations);i+=1)
+				if(StringMatch(illuminations[i],measurement_name))
+					item_exists = 1
+				endif
+			endfor
 			// If it does not exist, expand the wave and add it
-			if(V_value==-1)
+			if(item_exists==0)
 				illuminations[numpnts(illuminations)] = {measurement_name}
 			endif
 		endif
@@ -1911,7 +1954,6 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_are
 			Make/N=0/O voltage_list
 			Make/N=0/O start_index_list
 			Make/N=0/O end_index_list
-			Variable i
 			Variable current_val = wave2[0]
 			voltage_list[0] = {current_val}
 			start_index_list[0] = {0}
@@ -2095,15 +2137,21 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 	// If not a dark measurement, add to illuminations wave
 	if(!StringMatch(measurement_name,"*dark*"))
 		Wave/T illuminations
-		// Create illuminations wave if it does not exists
+		// Create illuminations wave if it does not exist
 		if(!WaveExists(illuminations))
 			Make/T/N=1 illuminations
 			illuminations[0] = measurement_name
 		// Check if illumination value already exists
 		else
-			FindValue/TEXT=measurement_name illuminations
+			Variable item_exists = 0
+			Variable i
+			for(i=0;i<numpnts(illuminations);i+=1)
+				if(StringMatch(illuminations[i],measurement_name))
+					item_exists = 1
+				endif
+			endfor
 			// If it does not exist, expand the wave and add it
-			if(V_value==-1)
+			if(item_exists==0)
 				illuminations[numpnts(illuminations)] = {measurement_name}
 			endif
 		endif
@@ -2135,7 +2183,6 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 		Duplicate/O $("wave1") voltage
 		Duplicate/O $("wave0") current
 		// round voltage values to nearest mV
-		Variable i
 		for(i=0;i<numpnts(voltage);i+=1)
 			voltage[i] = round(voltage[i]*1000)/1000
 		endfor
@@ -2777,7 +2824,7 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	Wave V_eff_onsets
 	// Plot first photocurrent curve
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[0]):
-	Display /W=(626.25,39.5,1076.25,365) $("photocurrent") vs $("voltage_effective")
+	Display /W=(580,40,1080,365) $("photocurrent") vs $("voltage_effective")
 	// Append the rest of the photocurrent curves
 	Variable i
 	for(i=1;i<numpnts(illuminations);i+=1)

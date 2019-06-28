@@ -171,6 +171,11 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		KillWaves/Z R_s_wave waves
 	else
 		Wave Z_real = $(StringFromList(i,wave_list))
+		Display Z_real vs frequency
+		Execute "FEDMS_GraphStyle()"
+		SetAxis bottom 100000,*
+		SetAxis left 5,200
+		ModifyGraph marker=19,msize=1
 		Variable/D/G R_s_ac = Mean(Z_real,x_start,x_end)
 	endif
 	// Calculate the inductance and geometric capacitance from the dark impedance data
@@ -242,18 +247,22 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 	ModifyGraph useMrkStrokeRGB=0
 	Legend/C/N=text0/F=0/A=LB
 	// Choose which dark capacitance data to use for further analysis
-	// Add listbox and button for user input
-	graph_name = WinName(0,1)
-	DoWindow/C $graph_name
-	ModifyGraph margin(top)=50
-	DrawText 0,0,"\\Z10Select which curve to use to calculate the depleted device capacitance."
-	ListBox list0 size={120,20*wave_count},listWave=waves,mode=2
-	Button button0 title="Go",proc=FEDMS_Button_ChooseListItem,size={60,25},fSize=14
-	PauseForUser $graph_name
-	NVAR selection_index
-	Variable/D/G C_g = C_g_wave[selection_index]
-	Duplicate/O $waves[selection_index] $("capacitance")
-	KillVariables/Z selection_index
+	if(wave_count>1)
+		// Add listbox and button for user input
+		graph_name = WinName(0,1)
+		DoWindow/C $graph_name
+		ModifyGraph margin(top)=50
+		DrawText 0,0,"\\Z10Select which curve to use to calculate the depleted device capacitance."
+		ListBox list0 size={120,20*wave_count},listWave=waves,mode=2
+		Button button0 title="Go",proc=FEDMS_Button_ChooseListItem,size={60,25},fSize=14
+		PauseForUser $graph_name
+		NVAR selection_index
+		Variable/D/G C_g = C_g_wave[selection_index]
+		Duplicate/O $waves[selection_index] $("capacitance")
+		KillVariables/Z selection_index
+	else
+		Variable/D/G C_g = C_g_wave[0]
+	endif
 	// Calculate dielectric constant from the geometric capacitance
 	Variable/G/D epsilon = C_g*Active_thickness_cm/(8.854187e-12*1e-2*Device_area_cm2)
 	// Clean up
@@ -1169,6 +1178,7 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 		n_sat_wave[N_pass] = {n_sat}
 		mu_sat = 1e-3*-mean(J_avg,V_sat-0.05,V_sat+0.05)*Active_thickness_cm/(2*1.60217662e-19*n_sat*(V_oc-V_sat_cor))
 		mu_sat_wave[N_pass] = {mu_sat}
+		// Check for convergence
 		if((N_pass>3) && abs(n_sat_wave[N_pass]-n_sat_wave[N_pass-1])>abs(n_sat_wave[N_pass-1]-n_sat_wave[N_pass-2]))
 			break
 		endif

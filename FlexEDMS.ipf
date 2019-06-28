@@ -372,6 +372,7 @@ Function FEDMS_AnalyzeImpedanceData(device_name,[show_graphs])
 		endfor
 	endfor
 	Sort intensities, illuminations, intensities
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave rejection_mask
 	if(!WaveExists(rejection_mask))
 		Make/D/N=(numpnts(illuminations))/O $("rejection_mask")

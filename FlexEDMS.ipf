@@ -1,6 +1,7 @@
+#pragma TextEncoding = "UTF-8"
 #pragma rtGlobals=3	// Use modern global access method and strict wave access.
 #pragma IgorVersion = 6.3 // Minimum Igor version required
-#pragma version = 0.1-alpha.2
+#pragma version = 1.0-beta.1
 
 // Copyright (c) 2017-2019 Michael C. Heiber
 // This source file is part of the FlexEDMS project, which is subject to the MIT License.
@@ -10,8 +11,7 @@
 #include <KBColorizeTraces>
 
 Menu "FlexEDMS"
-	"Create New Sample", /Q, FEDMS_CreateNewSample()
-	"Edit Sample Info", /Q, FEDMS_EditSampleInfo()
+	"Enter Sample Info", /Q, FEDMS_EnterSampleInfo()
 	Submenu "Time of Flight"
 		"Load ToF Data Files", /Q, FEDMS_LoadTOFDataFiles()
 		"Load ToF Data Folder", /Q, FEDMS_LoadTOFDataFolder(0)
@@ -24,12 +24,13 @@ Menu "FlexEDMS"
 	End
 	Submenu "J-V"
 		"Load J-V Data Folder", /Q, FEDMS_LoadJVFolderGUI()
-		"Plot J-V Data", /Q, FEDMS_PlotJV()
+		"Plot J-V Data", /Q, FEDMS_PlotJVGUI()
 	End
 	Submenu "IPDA"
 		"Load J-V Data Folder", /Q, FEDMS_LoadJVFolderGUI()
 		"Load Impedance Data Folder", /Q, FEDMS_LoadImpedanceFolderGUI()
-		"Plot Photocurrent Data", /Q, FEDMS_PlotPhotocurrent()
+		"Calculate IPDA Results", /Q, FEDMS_CalculateIPDAResultsGUI()
+		"Calculate and Plot Photocurrent Data", /Q, FEDMS_PlotPhotocurrentDataGUI()
 	End
 End
 
@@ -153,7 +154,7 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 		endfor
 		Execute "FEDMS_GraphStyle()"
 		SetAxis bottom 100000,*
-		SetAxis left 20,200
+		SetAxis left 10,400
 		ModifyGraph marker=19,msize=1
 		ModifyGraph useMrkStrokeRGB=0
 		Label left "Z_real (Ohm)"
@@ -178,7 +179,7 @@ Function FEDMS_AnalyzeDarkImpedanceCf(device_name,[show_graphs])
 			Display Z_real vs frequency
 			Execute "FEDMS_GraphStyle()"
 			SetAxis bottom 100000,*
-			SetAxis left 5,200
+			SetAxis left 10,400
 			ModifyGraph marker=19,msize=1
 			Label left "Z_real (Ohm)"
 			Label bottom "Frequency (Hz)"	
@@ -320,10 +321,21 @@ Function FEDMS_AnalyzeLightImpedanceCV(device_name,measurement_name,[show_graphs
 	Wave capacitance_dark = $("capacitance")
 	NVAR L
 	NVAR R_s_ac
+	// Calculate the dark CV data
+	if(DataFolderExists("root:FlexEDMS:"+substrate_num+":"+device_num+":Impedance:CV_dark"))
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:CV_dark
+		Wave voltage_applied_dark = $("voltage_applied")
+		Duplicate/O voltage_applied_dark $"voltage_cor" $"C_tot"
+		Wave Z_real_dark = $("Z_real")
+		Wave Z_imag_dark = $("Z_imag")
+		NVAR Freq
+		Wave C_tot_dark = $("C_tot")
+		C_tot_dark = (-1/(2*PI*Freq))*((Z_imag_dark-2*PI*Freq*L)/((Z_real_dark-R_s_ac)^2+(Z_imag_dark-2*PI*Freq*L)^2))
+	endif
 	// Calculate the capacitance from the light impedance data
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name)
 	Wave voltage_applied
-	Duplicate/O voltage_applied voltage_cor C_tot C_mu
+	Duplicate/O voltage_applied C_tot C_mu
 	Wave Z_real
 	Wave Z_imag
 	NVAR Freq
@@ -331,17 +343,21 @@ Function FEDMS_AnalyzeLightImpedanceCV(device_name,measurement_name,[show_graphs
 	// Substract the dark capacitance from the light capacitance to determine the chemical capacitance
 	//C_mu -= interp(Freq,frequency_dark,capacitance_dark)
 	C_mu = C_tot - Mean(capacitance_dark,pnt2x(capacitance_dark,0),pnt2x(capacitance_dark,4))
+	// Calculate alternate C_mu
+	if(DataFolderExists("root:FlexEDMS:"+substrate_num+":"+device_num+":Impedance:CV_dark"))
+		Duplicate/O voltage_applied C_mu_alt
+		C_mu_alt = C_tot - C_tot_dark
+	endif
 	// Correct the bias for the series resistance
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:dark:
-	Wave J_avg
-	KillVariables/Z R_s_dc
-	NVAR R_s
-	Variable i
-	for(i=0;i<numpnts(voltage_applied);i+=1)
-		if(voltage_applied[i]<pnt2x(J_avg,numpnts(J_avg)-1))
-			voltage_cor[i] = voltage_applied[i]-abs(J_avg(voltage_applied[i])*1e-3)*Device_area_cm2*R_s
-		endif
-	endfor
+	//Duplicate/O voltage_applied voltage_cor
+	//SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(measurement_name):
+	//Wave J_avg
+	//Variable i
+	//for(i=0;i<numpnts(voltage_applied);i+=1)
+		//if(voltage_applied[i]<pnt2x(J_avg,numpnts(J_avg)-1))
+			//voltage_cor[i] = voltage_applied[i]-abs(J_avg(voltage_applied[i])*1e-3)*Device_area_cm2*R_s_ac
+		//endif
+	//endfor
 	// Clean up from light analysis
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name):
 	// Restore original working directory
@@ -1173,19 +1189,19 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 	// Get impedance data
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name):
 	Wave C_mu
-	Wave voltage_cor
+	//Wave voltage_cor
 	Wave voltage_applied
 	Duplicate/O voltage_applied carrier_density
 	// Determine final V_sat for the impedance data
 	Variable/G V_sat
-	Variable/G V_sat_cor
+	//Variable/G V_sat_cor
 	Variable/G C_sat
 	Variable sat_index
 	Variable i
 	for(i=0;i<numpnts(voltage_applied);i+=1)
 		if(voltage_applied[i]>V_sat_JV)
 			V_sat = voltage_applied[i]
-			V_sat_cor = voltage_cor[i]
+			//V_sat_cor = voltage_cor[i]
 			C_sat = C_mu[i]
 			sat_index = i
 			break
@@ -1201,20 +1217,28 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 		if(N_pass==0)
 			Make/N=0/D/O n_sat_wave, mu_sat_wave, dmu_sat_wave
 		endif
-		n_sat = (C_sat/(1.602177e-19*Device_area_cm2*Active_thickness_cm))*(1/(V_oc-V_sat_cor)+dJ_sat/J_sat-dmu_sat/mu_sat)^(-1)
+		//n_sat = (C_sat/(1.602177e-19*Device_area_cm2*Active_thickness_cm))*(1/(V_oc-V_sat_cor)+dJ_sat/J_sat-dmu_sat/mu_sat)^(-1)
+		n_sat = (C_sat/(1.602177e-19*Device_area_cm2*Active_thickness_cm))*(1/(V_oc-V_sat)+dJ_sat/J_sat-dmu_sat/mu_sat)^(-1)
 		if(n_sat<0)
 			n_sat = 0
 		endif
-		for(i=0;i<numpnts(voltage_cor);i+=1)
-			if(voltage_cor[i]<V_sat_cor)
-				carrier_density[i] = n_sat - AreaXY(voltage_cor,C_mu,voltage_cor[i],V_sat_cor)/(1.602177e-19*Device_area_cm2*Active_thickness_cm)
-			elseif(voltage_cor[i]>=V_sat_cor)
-				carrier_density[i] = n_sat + AreaXY(voltage_cor,C_mu,V_sat_cor,voltage_cor[i])/(1.602177e-19*Device_area_cm2*Active_thickness_cm)
+		//for(i=0;i<numpnts(voltage_cor);i+=1)
+		//	if(voltage_cor[i]<V_sat_cor)
+		//		carrier_density[i] = n_sat - AreaXY(voltage_cor,C_mu,voltage_cor[i],V_sat_cor)/(1.602177e-19*Device_area_cm2*Active_thickness_cm)
+		//	elseif(voltage_cor[i]>=V_sat_cor)
+		//		carrier_density[i] = n_sat + AreaXY(voltage_cor,C_mu,V_sat_cor,voltage_cor[i])/(1.602177e-19*Device_area_cm2*Active_thickness_cm)
+		//	endif
+		//endfor
+		for(i=0;i<numpnts(voltage_applied);i+=1)
+			if(voltage_applied[i]<V_sat)
+				carrier_density[i] = n_sat - AreaXY(voltage_applied,C_mu,voltage_applied[i],V_sat)/(1.602177e-19*Device_area_cm2*Active_thickness_cm)
+			elseif(voltage_applied[i]>=V_sat)
+				carrier_density[i] = n_sat + AreaXY(voltage_applied,C_mu,V_sat,voltage_applied[i])/(1.602177e-19*Device_area_cm2*Active_thickness_cm)
 			endif
 		endfor
 		dmu_sat_wave[N_pass] = {dmu_sat}
 		n_sat_wave[N_pass] = {n_sat}
-		mu_sat = 1e-3*-mean(J_avg,V_sat-0.05,V_sat+0.05)*Active_thickness_cm/(2*1.60217662e-19*n_sat*(V_oc-V_sat_cor))
+		mu_sat = 1e-3*-mean(J_avg,V_sat-0.05,V_sat+0.05)*Active_thickness_cm/(2*1.60217662e-19*n_sat*(V_oc-V_sat))
 		mu_sat_wave[N_pass] = {mu_sat}
 		// Check for convergence
 		if((N_pass>3) && abs(n_sat_wave[N_pass]-n_sat_wave[N_pass-1])>abs(n_sat_wave[N_pass-1]-n_sat_wave[N_pass-2]))
@@ -1230,13 +1254,13 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 		// Calculate updated mobility derivative for next pass
 		Variable mobility_bias1, mobility_bias2
 		if(sat_index==0)
-			mobility_bias1 = 1e-3*-mean(J_avg,voltage_applied[sat_index]-0.05,voltage_applied[sat_index]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index]*(V_oc-voltage_cor[sat_index]))
-			mobility_bias2 = 1e-3*-mean(J_avg,voltage_applied[sat_index+1]-0.05,voltage_applied[sat_index+1]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index+1]*(V_oc-voltage_cor[sat_index+1]))
-			dmu_sat = ((mobility_bias2-mobility_bias1)/(voltage_cor[sat_index+1]-voltage_cor[sat_index])+dmu_sat_wave[N_pass])/2
+			mobility_bias1 = 1e-3*-mean(J_avg,voltage_applied[sat_index]-0.05,voltage_applied[sat_index]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index]*(V_oc-voltage_applied[sat_index]))
+			mobility_bias2 = 1e-3*-mean(J_avg,voltage_applied[sat_index+1]-0.05,voltage_applied[sat_index+1]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index+1]*(V_oc-voltage_applied[sat_index+1]))
+			dmu_sat = ((mobility_bias2-mobility_bias1)/(voltage_applied[sat_index+1]-voltage_applied[sat_index])+dmu_sat_wave[N_pass])/2
 		else
-			mobility_bias1 = 1e-3*-mean(J_avg,voltage_applied[sat_index-1]-0.05,voltage_applied[sat_index-1]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index-1]*(V_oc-voltage_cor[sat_index-1]))
-			mobility_bias2 = 1e-3*-mean(J_avg,voltage_applied[sat_index+1]-0.05,voltage_applied[sat_index+1]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index+1]*(V_oc-voltage_cor[sat_index+1]))
-			dmu_sat = ((mobility_bias2-mobility_bias1)/(voltage_cor[sat_index+1]-voltage_cor[sat_index-1])+dmu_sat_wave[N_pass])/2
+			mobility_bias1 = 1e-3*-mean(J_avg,voltage_applied[sat_index-1]-0.05,voltage_applied[sat_index-1]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index-1]*(V_oc-voltage_applied[sat_index-1]))
+			mobility_bias2 = 1e-3*-mean(J_avg,voltage_applied[sat_index+1]-0.05,voltage_applied[sat_index+1]+0.05)*Active_thickness_cm/(2*1.60217662e-19*carrier_density[sat_index+1]*(V_oc-voltage_applied[sat_index+1]))
+			dmu_sat = ((mobility_bias2-mobility_bias1)/(voltage_applied[sat_index+1]-voltage_applied[sat_index-1])+dmu_sat_wave[N_pass])/2
 		endif
 		N_pass += 1
 	while(1)
@@ -1275,7 +1299,7 @@ Function FEDMS_CalculateIPDAFieldDepends(device_name)
 			if(rejection_mask[j]==1)
 				continue
 			endif
-			SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(illuminations[j])
+			SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[j])
 			Wave voltage_applied
 			Wave carrier_density
 			Wave F_int
@@ -1331,8 +1355,9 @@ Function FEDMS_CalculateIPDAFieldDepends(device_name)
 	SetDataFolder original_data_folder
 End
 
-Function FEDMS_CalculateIPDAResults(device_name)
+Function FEDMS_CalculateIPDAResults(device_name,[hide_table])
 	String device_name
+	Variable hide_table
 	String original_data_folder = GetDataFolder(1)	
 	// Perform requisite data analysis
 	FEDMS_AnalyzeJVIntensity(device_name)
@@ -1398,7 +1423,7 @@ Function FEDMS_CalculateIPDAResults(device_name)
 		J_scs[index] = {J_sc}
 		FFs[index] = {FF}
 		V_ocs[index] = {V_oc}
-		PCEs[index] = {P_max*I_suns_val}
+		PCEs[index] = {P_max/I_suns_val}
 		tau_ex[index] = {Active_thickness_cm^2/(2*mobility_mp[index]*V_int[index])}
 		tau_rec[index] = {1/(k_mp[index]*n_mp)}
 		theta[index] = {(k_mp[index]*G_mp[index]*Active_thickness_cm^4)/(V_int[index]^2*mobility_mp[index]^2)}
@@ -1461,7 +1486,22 @@ Function FEDMS_CalculateIPDAResults(device_name)
 		index += 1
 		KillWaves/Z gen_wave br_wave W_result fit_J_nfg W_fitConstants
 	endfor
+	// Create results summary table
+	if(hide_table!=1)
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):IPDA_Results	
+		Edit/W=(400,400,1480,630) I_suns,G_mp,J_scs,V_ocs,FFs,PCEs,n_mps,k_mp,mobility_mp,reduction_factor,tau_rec,tau_ex,theta as device_name+"_IPDA_Results"
+		ModifyTable width=75,format(Point)=1 
+	endif
 	SetDataFolder $(original_data_folder)
+End
+
+Function FEDMS_CalculateIPDAResultsGUI()
+	String sample_name = FEDMS_ChooseDevice("Impedance")
+	if(StringMatch(sample_name,""))
+		return NaN
+	endif
+	Print "•FEDMS_CalculateIPDAResults(\""+sample_name+"\")"
+	FEDMS_CalculateIPDAResults(sample_name)
 End
 
 Function FEDMS_CalculatePhotocurrent(device_name,measurement_name)
@@ -1538,6 +1578,74 @@ Function FEDMS_CalculatePVJVResults(J_wave)
 	W_result[4] = V_mp
 	W_result[5] = FF
 	KillWaves/Z deriv, power, $("fit_J_wave") W_coef $"W_sigma"
+End
+
+Function/S FEDMS_ChooseDevice(keyword)
+	String keyword
+	String original_folder = GetDataFolder(1)
+	// Build the sample list
+	SetDataFolder root:FlexEDMS
+	String device_list = ""
+	DFREF dfr1 = GetDataFolderDFR()
+	Variable N_samples = CountObjectsDFR(dfr1,4)
+	String substrate_name
+	String device_name
+	Variable i
+	Variable j
+	for(i=0;i<N_samples;i+=1)
+		substrate_name = GetIndexedObjNameDFR(dfr1,4,i)
+		if(StringMatch("Analysis",substrate_name)==0)
+			SetDataFolder root:FlexEDMS:$(substrate_name)
+			DFREF dfr2 = GetDataFolderDFR()
+			Variable N_devices = CountObjectsDFR(dfr2,4)
+			for(j=0;j<N_devices;j+=1)
+				device_name = GetIndexedObjNameDFR(dfr2,4,j)
+				SetDataFolder root:FlexEDMS:$(substrate_name):$(device_name)
+				if(DataFolderExists(":"+keyword))
+					device_list = AddListItem(substrate_name+device_name,device_list)
+				endif
+			endfor
+		endif
+	endfor
+	String sample_name
+	// Prompt user to choose the sample
+	Prompt sample_name, "Choose the sample name:", popup, device_list
+	DoPrompt "Make Selection",sample_name
+	// User cancelled operation
+	if(V_flag==1)
+		SetDataFolder original_folder
+		return ""
+	endif
+	SetDataFolder original_folder
+	return sample_name
+End
+
+Function/S FEDMS_ChooseMeasurement(device_name,measurement_type)
+	String device_name
+	String measurement_type
+	String original_folder = GetDataFolder(1)
+	String substrate_num = RemoveEnding(device_name)
+	String device_num = device_name[strlen(device_name)-1]
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):$(measurement_type)
+	String measurement_name
+	String measurement_list = ""
+	DFREF dfr1 = GetDataFolderDFR()
+	Variable i
+	Variable N_measurements = CountObjectsDFR(dfr1,4)
+	for(i=0;i<N_measurements;i+=1)
+		measurement_name = GetIndexedObjNameDFR(dfr1,4,i)
+		measurement_list = AddListItem(measurement_name,measurement_list)
+	endfor
+	// Prompt user to choose the measurement
+	Prompt measurement_name, "Choose the measurement condition:", popup, measurement_list
+	DoPrompt "Make Selection",measurement_name
+	// User cancelled operation
+	if(V_flag==1)
+		SetDataFolder original_folder
+		return ""
+	endif
+	SetDataFolder original_folder
+	return measurement_name
 End
 
 Function/S FEDMS_ChooseTOFCarrierType(sample_name)
@@ -1617,7 +1725,6 @@ Function/S FEDMS_ChooseSubfolder(folder_path)
 	return subfolder_name
 End
 
-
 Function/S FEDMS_ChooseTOFSample()
 	String original_folder = GetDataFolder(1)
 	// Build the sample list
@@ -1648,18 +1755,46 @@ Function/S FEDMS_ChooseTOFSample()
 	return sample_name
 End
 
-Function/S FEDMS_CreateNewSample()
+Function/S FEDMS_DoOpenMultiFileDialog()
+	Variable refNum
+	String message = "Select one or more files"
+	String outputPaths = ""
+	String fileFilters = "Data Files (*.txt,*.dat,*.csv):.txt,.dat,.csv;"
+	fileFilters += "All Files:.*;"
+	Open /D /R /MULT=1 /F=fileFilters /M=message refNum
+	outputPaths = S_fileName
+	if (strlen(outputPaths) == 0)
+		return ""
+	endif
+	return outputPaths		// Will be empty if user canceled
+End
+
+Function FEDMS_EnterSampleInfo()
 	String original_folder = GetDataFolder(1)
-	NewDataFolder/O/S root:FlexEDMS
-	// Build the current sample list
+	// Build the sample list
+	SetDataFolder root:FlexEDMS
 	String sample_list = ""
 	DFREF dfr1 = GetDataFolderDFR()
 	Variable N_samples = CountObjectsDFR(dfr1,4)
+	String folder_name
 	Variable i
 	for(i=0;i<N_samples;i+=1)
-		sample_list = AddListItem(GetIndexedObjNameDFR(dfr1,4,i),sample_list)
+		folder_name = GetIndexedObjNameDFR(dfr1,4,i)
+		if(StringMatch(folder_name,"Analysis")==0)
+			sample_list = AddListItem(folder_name,sample_list)
+		endif
 	endfor
+	sample_list = AddListItem("New Sample",sample_list)
+	// Prompt user to create new or choose existing sample
 	String sample_name
+	Prompt sample_name, "Create new sample or choosing existing sample:", popup, sample_list
+	DoPrompt "Make Selection",sample_name
+	// User cancelled operation
+	if(V_flag==1)
+		SetDataFolder original_folder
+		return NaN
+	endif
+	// Build sample info form
 	String fab_date
 	String fab_persons
 	String sample_comp
@@ -1687,6 +1822,53 @@ Function/S FEDMS_CreateNewSample()
 	Prompt N_devices, "Enter the number of devices on the substrate:"
 	Prompt device_area, "Enter the active area of the devices (cm^2):"
 	Prompt comments, "Enter any additional comments and notes:"
+	// Load existing sample data into form variables if they exist
+	if(StringMatch("New Sample",sample_name)==0)
+		SetDataFolder :$(sample_name)
+		SVAR Fabrication_date
+		SVAR Fabrication_persons
+		SVAR Sample_composition
+		SVAR Blend_ratio
+		SVAR Casting_solvent
+		NVAR Annealing_temperature_C
+		NVAR Annealing_time_min
+		NVAR Active_thickness_cm
+		NVAR Device_area_cm2
+		SVAR Sample_comments
+		if(Exists("Fabrication_date"))
+			fab_date = Fabrication_date
+		endif
+		if(Exists("Fabrication_persons"))
+			fab_persons = Fabrication_persons
+		endif
+		if(Exists("Sample_composition"))
+			sample_comp = Sample_composition
+		endif
+		if(Exists("Blend_ratio"))
+			ratio = Blend_ratio
+		endif
+		if(Exists("Casting_solvent"))
+			
+		endif
+		if(Exists("Active_thickness_cm"))
+			sample_thickness = Active_thickness_cm
+		endif
+		if(Exists("Device_area_cm2"))
+			device_area = Device_area_cm2
+		endif
+		if(Exists("Sample_comments"))
+			comments = Sample_comments
+		endif
+		if(Exists("Annealing_temperature_C"))
+			annealing_temp = Annealing_temperature_C
+		endif
+		if(Exists("Annealing_time_min"))
+			annealing_time = Annealing_time_min
+		endif
+	else
+		sample_name = ""
+	endif
+	// Prompt user to enter/update sample info
 	Variable input_needed = 1
 	do
 		// First prompt
@@ -1715,8 +1897,9 @@ Function/S FEDMS_CreateNewSample()
 	// User cancelled operation
 	if(V_flag==1)
 		SetDataFolder original_folder
-		return ""
+		return NaN
 	endif
+	// Save user input into sample folder
 	if(!DataFolderExists(sample_name))
 		NewDataFolder $(sample_name)
 	endif
@@ -1738,84 +1921,6 @@ Function/S FEDMS_CreateNewSample()
 			NewDataFolder $(num2char(i+65))
 		endfor
 	endif
-	SetDataFolder original_folder
-	return sample_name
-End
-
-Function FEDMS_CreateNewSample2()
-	String sample_type_list = FEDMS_LoadSampleTypes()
-End
-
-Function/S FEDMS_DoOpenMultiFileDialog()
-	Variable refNum
-	String message = "Select one or more files"
-	String outputPaths = ""
-	String fileFilters = "Data Files (*.txt,*.dat,*.csv):.txt,.dat,.csv;"
-	fileFilters += "All Files:.*;"
-	Open /D /R /MULT=1 /F=fileFilters /M=message refNum
-	outputPaths = S_fileName
-	if (strlen(outputPaths) == 0)
-		return ""
-	endif
-	return outputPaths		// Will be empty if user canceled
-End
-
-Function FEDMS_EditSampleInfo()
-	String original_folder = GetDataFolder(1)
-	// Build the sample list
-	SetDataFolder root:FlexEDMS
-	String sample_list = ""
-	DFREF dfr1 = GetDataFolderDFR()
-	Variable N_samples = CountObjectsDFR(dfr1,4)
-	String folder_name
-	Variable i
-	for(i=0;i<N_samples;i+=1)
-		folder_name = GetIndexedObjNameDFR(dfr1,4,i)
-		if(StringMatch(folder_name,"Sample*"))
-			sample_list = AddListItem(folder_name,sample_list)
-		endif
-	endfor
-	// Prompt user to choose the sample
-	String sample_name
-	Prompt sample_name, "Choose the sample name:", popup, sample_list
-	DoPrompt "Make Selections",sample_name
-	// Create sample edit form
-	SetDataFolder :$(sample_name)
-	SVAR Fabrication_date
-	SVAR Fabrication_persons
-	SVAR Sample_composition
-	NVAR Annealing_temperature_C
-	NVAR Annealing_time_min
-	NVAR Active_thickness_cm
-	NVAR Device_area_cm2
-	SVAR Sample_comments
-	String fab_date = Fabrication_date
-	String fab_persons = Fabrication_persons
-	String sample_comp = Sample_composition
-	Variable sample_thickness = Active_thickness_cm
-	Variable device_area = Device_area_cm2
-	String comments = Sample_comments
-	Variable annealing_temp = Annealing_temperature_C
-	Variable annealing_time = Annealing_time_min
-	Prompt sample_name, "Enter the sample name:"
-	Prompt fab_date, "Enter the fabrication date:"
-	Prompt fab_persons, "Enter the fabrication person(s):"
-	Prompt sample_comp, "Enter the composition of the semiconductor layer:"
-	Prompt sample_thickness, "Enter the semiconductor layer thickness (cm):"
-	Prompt annealing_temp, "Enter the annealing temperature (C):"
-	Prompt annealing_time, "Eneter the annealing time (min):"
-	Prompt device_area, "Enter the active area of the devices (cm^2):"
-	Prompt comments, "Enter any additional comments and notes:"
-	DoPrompt "Enter Sample Info",sample_name, fab_date, fab_persons, sample_comp, sample_thickness, annealing_temp, annealing_time, device_area, comments
-	// Update global variables and strings
-	Fabrication_date = fab_date
-	Fabrication_persons = fab_persons
-	Sample_composition = sample_comp
-	Annealing_temperature_C =  annealing_temp
-	Annealing_time_min = annealing_time
-	Active_thickness_cm = sample_thickness
-	Device_area_cm2 = device_area
-	Sample_comments = comments
 	SetDataFolder original_folder
 End
 
@@ -2056,7 +2161,7 @@ Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file
 	file_list = SortList(file_list,";",16)
 	Variable file_count = ItemsInList(file_list)
 	// Load data from each file
-	Print "Loading "+num2str(ItemsInList(file_list,";"))+" data files..."
+	Print "Loading "+num2str(ItemsInList(file_list,";"))+" impedance data files..."
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		file_name = StringFromList(i,file_list,";")
 		String fullpathname = path_str+file_name
@@ -2096,7 +2201,7 @@ Function FEDMS_LoadImpedanceFolderGUI()
 		return NaN
 	endif
 	PathInfo folder_path
-	Print "�FEDMS_LoadImpedanceFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+","+num2str(active_thickness)+")"
+	Print "•FEDMS_LoadImpedanceFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+","+num2str(active_thickness)+")"
 	FEDMS_LoadImpedanceFolder(S_path, measurement_persons, measurement_comments, file_format,device_area,active_thickness)
 End
 
@@ -2232,7 +2337,7 @@ Function FEDMS_LoadJVFolder(path_str, measurement_persons, comments, file_format
 	file_list = SortList(file_list,";",16)
 	Variable file_count = ItemsInList(file_list)
 	// Load data from each file
-	Print "Loading "+num2str(ItemsInList(file_list,";"))+" data files..."
+	Print "Loading "+num2str(ItemsInList(file_list,";"))+" JV data files..."
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		file_name = StringFromList(i,file_list,";")
 		String fullpathname = path_str+file_name
@@ -2269,12 +2374,8 @@ Function FEDMS_LoadJVFolderGUI()
 		return NaN
 	endif
 	PathInfo folder_path
-	Print "�FEDMS_LoadJVFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+","+num2str(mismatch_factor)+")"
+	Print "•FEDMS_LoadJVFolder(\""+S_path+"\",\""+measurement_persons+"\",\""+measurement_comments+"\",\""+file_format+"\","+num2str(device_area)+","+num2str(mismatch_factor)+")"
 	FEDMS_LoadJVFolder(S_path, measurement_persons, measurement_comments, file_format,device_area,mismatch_factor)
-End
-
-Function/S FEDMS_LoadSampleTypes()
-	
 End
 
 Function FEDMS_LoadToFDataFolder(isIntensityTest)
@@ -2478,22 +2579,22 @@ Function FEDMS_PlotCapacitanceVsBias(device_name) : Graph
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
 	SetDataFolder :$("CV_"+illuminations[0]):
-	Display/N=$("Capacitance_Data_"+device_name) $("C_mu") vs $("voltage_cor")
+	Display/N=$("Capacitance_Data_"+device_name) $("C_mu") vs $("voltage_applied")
 	Variable i
 	for(i=1;i<numpnts(illuminations);i+=1)
 		SetDataFolder ::$("CV_"+illuminations[i]):
-		AppendToGraph $("C_mu") vs $("voltage_cor")
+		AppendToGraph $("C_mu") vs $("voltage_applied")
 	endfor
 	Execute "FEDMS_GraphStyle()"
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave C_sats
 	if(WaveExists(C_sats))
-		AppendToGraph $("C_sats") vs $("V_sat_cors")
+		AppendToGraph $("C_sats") vs $("V_sats")
 		ModifyGraph mode(C_sats)=3, marker(C_sats)=18, rgb(C_sats)=(0,0,0)
 	endif
 	TextBox/C/N=text0/F=0/A=LT/X=8/Y=8 device_name
 	Label left "Chemical Capacitance (F)"
-	Label bottom "Corrected Voltage, V\Bcor\M (V)"
+	Label bottom "Voltage (V)"
 	SetAxis/A=2 left
 	SetAxis bottom -1,*
 	ModifyGraph log(bottom)=0
@@ -2535,11 +2636,44 @@ Function FEDMS_PlotCarrierDensityVsBias(device_name) : Graph
 	SetAxis left 1e14,*
 	SetAxis bottom -1,*
 	// Add legend
-	Legend/C/N=text1/J/F=0/A=LT "\\s(carrier_density) "+illuminations[0]
-	for(i=1;i<numpnts(illuminations);i+=1)
-		AppendText "\\s(carrier_density#"+num2str(i)+") "+illuminations[i];DelayUpdate
+	i = numpnts(illuminations)-1
+	Legend/C/N=text1/J/F=0/A=LT/X=4/Y=4 "\\s(carrier_density#"+num2str(i)+") "+illuminations[i]
+	for(i-=1;i>=0;i-=1)
+		if(i==0)
+			AppendText "\\s(carrier_density) "+illuminations[i];DelayUpdate
+		else
+			AppendText "\\s(carrier_density#"+num2str(i)+") "+illuminations[i];DelayUpdate
+		endif
 	endfor
 	SetDataFolder original_data_folder
+End
+
+Function FEDMS_PlotFFVsTheta(device_list) : Graph
+	String device_list
+	String original_data_folder = GetDataFolder(1)
+	Variable i
+	for(i=0;i<ItemsInList(device_list);i+=1)
+		String device_name = StringFromList(i,device_list)	
+		String substrate_num = RemoveEnding(device_name)
+		String device_num = device_name[Strlen(device_name)-1]
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):IPDA_Results
+		if(i==0)
+			Display $("FFs") vs $("theta")
+		else
+			AppendToGraph $("FFs") vs $("theta")
+		endif
+	endfor
+	Execute "FEDMS_GraphStyle()"
+	ShowKBColorizePanel()
+	KBColorizeTraces#KBColorTablePopMenuProc("name",0,"YellowHot")
+	KillWindow $("KBColorizePanel")
+	SetAxis left 0.3,0.75
+	ModifyGraph log(left)=0
+	SetAxis bottom 0.04,40
+	Label left "Fill Factor"
+	Label bottom "θ"
+	SetDataFolder original_data_folder
+End
 End
 
 Function FEDMS_PlotKbrVsBias(device_name) : Graph
@@ -2551,7 +2685,7 @@ Function FEDMS_PlotKbrVsBias(device_name) : Graph
 	Wave/T illuminations
 	Variable i
 	for(i=0;i<numpnts(illuminations);i+=1)
-		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(illuminations[i]):
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i]):
 		if(i==0)
 			Display/W=(506.4,240.2,744,408.8)/N=$("Bias_Kbr_"+device_name) $("k_br") vs $("voltage_applied")
 		else
@@ -2808,6 +2942,16 @@ Function FEDMS_PlotJV(device_name,measurement_type,measurement_name) : Graph
 	SetDataFolder original_data_folder
 End
 
+Function FEDMS_PlotJVGUI() : Graph
+	String device_name = FEDMS_ChooseDevice("JV")
+	if(StringMatch(device_name,""))
+		return NaN
+	endif
+	String measurement_name = FEDMS_ChooseMeasurement(device_name,"JV")
+	Print "•FEDMS_PlotJV(\""+device_name+"\",\"JV\",\""+measurement_name+"\")"
+	FEDMS_PlotJV(device_name,"JV",measurement_name)
+End
+
 Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	String device_name
 	Variable show_fits
@@ -2825,6 +2969,12 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	Wave V_eff_onsets
 	// Plot first photocurrent curve
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[0]):
+	// Skip plotting if photocurrent data is missing
+	if(Exists("photocurrent")!=1)
+		Print "Error! No photocurrent data found for that sample. Make sure you run the FEDMS_ first"
+		SetDataFolder original_data_folder
+		return NaN
+	endif
 	Display /W=(580,40,1080,365) $("photocurrent") vs $("voltage_effective")
 	// Append the rest of the photocurrent curves
 	Variable i
@@ -2838,18 +2988,43 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	Label left "Photocurrent Density (mA cm\\S-2\\M)"
 	Label bottom "Effective Voltage (V)"
 	ModifyGraph log=1, mode=0, lsize=2
-	TextBox/C/N=text0/F=0/A=RB/X=8/Y=8 (device_name)
+	TextBox/C/N=text0/F=0/A=MB/X=4/Y=4 (device_name)
 	if(show_fits==1)
 		for(i=0;i<numpnts(illuminations);i+=1)
 			SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i]):
-			AppendToGraph $("fit_photocurrent") vs $("voltage_effective")
-			ModifyGraph rgb[numpnts(illuminations)+i] = (0,0,0)
+			if(Exists("fit_photocurrrent")==1)
+				AppendToGraph $("fit_photocurrent") vs $("voltage_effective")
+				ModifyGraph rgb[numpnts(illuminations)+i] = (0,0,0)
+			endif
 		endfor
-		AppendToGraph J_sat_onsets vs V_eff_onsets
-		ModifyGraph mode(J_sat_onsets)=3, marker(J_sat_onsets)=18, rgb(J_sat_onsets)=(0,0,0)
+		if(WaveExists(J_sat_onsets))
+			AppendToGraph J_sat_onsets vs V_eff_onsets
+			ModifyGraph mode(J_sat_onsets)=3, marker(J_sat_onsets)=18, rgb(J_sat_onsets)=(0,0,0)
+		endif
 	endif
+	// Add Legend
+	i = numpnts(illuminations)-1
+	Legend/C/N=text1/J/F=0/A=RB/X=4/Y=4 "\\s(photocurrent#"+num2str(i)+") "+illuminations[i]
+	for(i-=1;i>=0;i-=1)
+		if(i==0)
+			AppendText "\\s(photocurrent) "+illuminations[i];DelayUpdate
+		else
+			AppendText "\\s(photocurrent#"+num2str(i)+") "+illuminations[i];DelayUpdate
+		endif
+	endfor
 	// Restore working directory
 	SetDataFolder original_data_folder
+End
+
+Function FEDMS_PlotPhotocurrentDataGUI()
+	String device_name = FEDMS_ChooseDevice("JV")
+	if(StringMatch(device_name,""))
+		return NaN
+	endif
+	Print "•FEDMS_AnalyzeJVIntensity(\""+device_name+"\")"
+	FEDMS_AnalyzeJVIntensity(device_name)
+	Print "•FEDMS_PlotPhotocurrentData(\""+device_name+"\",show_fits=1)"
+	FEDMS_PlotPhotocurrentData(device_name,show_fits=1)
 End
 
 Function FEDMS_PlotTOF_FieldDependences()
@@ -2979,6 +3154,6 @@ Macro FEDMS_GraphStyle() : GraphStyle
 	ModifyGraph lsize=2
 	// Line Colors
 	ShowKBColorizePanel()
-	KBColorizeTraces#KBColorTablePopMenuProc("name",0,"YellowHot")
+	KBColorizeTraces#KBColorTablePopMenuProc("name",0,"Rainbow")
 	KillWindow $("KBColorizePanel")
 End

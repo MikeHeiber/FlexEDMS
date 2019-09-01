@@ -450,35 +450,32 @@ Function FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 			for(i=1;i<numpnts(voltage);i+=1)
 				if(voltage[i-1]-voltage[i]>0.001)
 					sweep_point1 = i-2
+					sweep_point2 = i-1
 					break
 				endif
 			endfor
-			Duplicate/O/R=(0,sweep_point1) J_raw J_forward
-			Duplicate/O/R=(sweep_point2,numpnts(voltage)-1) J_raw J_reverse
 			voltage_start1 = round(10000*voltage[0])/10000
 			voltage_start2 = round(10000*voltage[sweep_point2])/10000
 		else // Inverted sweep
-			start_point = 0
 			for(i=1;i<numpnts(voltage);i+=1)
 				if(voltage[i]-voltage[i-1]>0.001)
-					start_point = i-2
+					sweep_point1 = i-2
+					sweep_point2 = i-1
 					break
 				endif
 			endfor
-			Duplicate/O/R=(0,start_point) J_raw J_reverse
-			Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_forward
 			voltage_start2 = round(10000*voltage[0])/10000
 			voltage_start1 = round(10000*voltage[sweep_point2])/10000
 		endif
 	elseif(stringmatch(File_format,"Hersam Lab"))
 		// Only works with standard forward+reverse scans that have same voltage range in both directions
-		
 		sweep_point1 = (numpnts(voltage)/2)-1
 		sweep_point2 = (numpnts(voltage)/2)
-		Duplicate/O/R=(0,sweep_point1) J_raw J_forward
-		Duplicate/O/R=(sweep_point2,numpnts(voltage)-1) J_raw J_reverse
 		voltage_start1 = round(10000*voltage[0])/10000
+		voltage_start2 = round(10000*voltage[sweep_point2])/10000
 	endif
+	Duplicate/O/R=(0,sweep_point1) J_raw J_forward
+	Duplicate/O/R=(sweep_point2,numpnts(voltage)-1) J_raw J_reverse
 	SetScale/P x voltage_start1,voltage_step,"", J_forward
 	SetScale/P x voltage_start2,(voltage_step*-1),"", J_reverse
 	Reverse J_reverse
@@ -1578,7 +1575,10 @@ Function FEDMS_CalculatePVJVResults(J_wave)
 		Duplicate/O J_wave deriv
 		deriv = W_coef[0]-(W_coef[1]/W_coef[2])*x*exp(-(x-offset)/W_coef[2])+W_coef[1]*exp(-(x-offset)/W_coef[2])
 		FindLevel/Q deriv,0
-		V_mp = V_LevelX
+		// Check that fitting produced a valid number
+		if(numtype(V_LevelX)==0)
+			V_mp = V_LevelX
+		endif
 		P_max = -W_coef[0]*V_mp-W_coef[1]*V_mp*exp(-(V_mp-offset)/W_coef[2])
 	endif
 	Variable J_mp = J_wave(V_mp)
@@ -2111,15 +2111,20 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format_in,device_
 		LoadWave/A/J/Q/K=2/V={""," $",0,0} fullpathname
 		Wave/T wave0
 		// Parse file header for measurement date and time
-		date_str = StringFromList(ItemsInList(wave0[3]," ")-1,wave0[3]," ")
+		//date_str = StringFromList(ItemsInList(wave0[3]," ")-1,wave0[3]," ")
+		date_str = StringFromList(1,wave0[3]," ")
 		date_str = ReplaceString("-",date_str,"/")
 		String/G Measurement_date = date_str
-		String/G Measurement_time = StringFromList(ItemsInList(wave0[4]," ")-1,wave0[4]," ")
-		// Find end of header section
-		FindValue/TEXT="End Comments" wave0
-		Variable data_start_index = V_value+1
+		//String/G Measurement_time = StringFromList(ItemsInList(wave0[4]," ")-1,wave0[4]," ")
+		String/G Measurement_time = StringFromList(ItemsInList(wave0[3]," ")-1,wave0[3]," ")
+		Variable data_start_index = 0
+		for(i=0;i<numpnts(wave0);i+=1)
+			if(StringMatch(wave0[i],"*Freq*"))
+				data_start_index = i + 1
+			endif
+		endfor
 		// Load Data Waves
-		LoadWave/A/J/D/Q/O/K=0/L={data_start_index-2,data_start_index,0,0,0} fullpathname
+		LoadWave/A/J/D/Q/O/K=0/L={data_start_index-1,data_start_index,0,0,0} fullpathname
 		Wave wave2
 		Variable/G Amplitude_V = wave2[0]
 		// Load dark C-f scan data

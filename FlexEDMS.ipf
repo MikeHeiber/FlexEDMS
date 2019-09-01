@@ -341,8 +341,10 @@ Function FEDMS_AnalyzeLightImpedanceCV(device_name,measurement_name,[show_graphs
 	NVAR Freq
 	C_tot = (-1/(2*PI*Freq))*((Z_imag-2*PI*Freq*L)/((Z_real-R_s_ac)^2+(Z_imag-2*PI*Freq*L)^2))
 	// Substract the dark capacitance from the light capacitance to determine the chemical capacitance
-	//C_mu -= interp(Freq,frequency_dark,capacitance_dark)
-	C_mu = C_tot - Mean(capacitance_dark,pnt2x(capacitance_dark,0),pnt2x(capacitance_dark,4))
+	FindLevel/P/Q frequency_dark, Freq
+	Variable Freq_index = V_LevelX
+	Variable C_d = Mean(capacitance_dark,pnt2x(capacitance_dark,Freq_index-2),pnt2x(capacitance_dark,Freq_index+2))
+	C_mu = C_tot - C_d
 	// Calculate alternate C_mu
 	if(DataFolderExists("root:FlexEDMS:"+substrate_num+":"+device_num+":Impedance:CV_dark"))
 		Duplicate/O voltage_applied C_mu_alt
@@ -421,6 +423,7 @@ Function FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 	String device_num = device_name[Strlen(device_name)-1]
 	SetDataFolder root:FlexEDMS:$(substrate_num)
 	// Gather device info
+	SVAR File_format
 	NVAR Device_area_cm2
 	NVAR Active_thickness_cm
 	// Analyze the designated JV measurement
@@ -435,37 +438,47 @@ Function FEDMS_AnalyzeJV(device_name,measurement_type,measurement_name)
 	else
 		J_raw = 1000*current/(Device_area_cm2*Mismatch_factor)
 	endif
-	// Separate forward and reverse current sweeps
-	Variable start_point
+	Variable voltage_step = abs(round(10000*(voltage[1]-voltage[0]))/10000)
 	Variable voltage_start1
 	Variable voltage_start2
+	Variable sweep_point1 = 0
+	Variable sweep_point2 = 0
 	Variable i
-	if(voltage[0]<0)
-		start_point = 0
-		for(i=1;i<numpnts(voltage);i+=1)
-			if(voltage[i-1]-voltage[i]>0.001)
-				start_point = i-2
-				break
-			endif
-		endfor
-		Duplicate/O/R=(0,start_point) J_raw J_forward
-		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_reverse
+	// Separate forward and reverse current sweeps
+	if(stringmatch(File_format,"Richter Lab"))
+		if(voltage[0]<0)
+			for(i=1;i<numpnts(voltage);i+=1)
+				if(voltage[i-1]-voltage[i]>0.001)
+					sweep_point1 = i-2
+					break
+				endif
+			endfor
+			Duplicate/O/R=(0,sweep_point1) J_raw J_forward
+			Duplicate/O/R=(sweep_point2,numpnts(voltage)-1) J_raw J_reverse
+			voltage_start1 = round(10000*voltage[0])/10000
+			voltage_start2 = round(10000*voltage[sweep_point2])/10000
+		else // Inverted sweep
+			start_point = 0
+			for(i=1;i<numpnts(voltage);i+=1)
+				if(voltage[i]-voltage[i-1]>0.001)
+					start_point = i-2
+					break
+				endif
+			endfor
+			Duplicate/O/R=(0,start_point) J_raw J_reverse
+			Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_forward
+			voltage_start2 = round(10000*voltage[0])/10000
+			voltage_start1 = round(10000*voltage[sweep_point2])/10000
+		endif
+	elseif(stringmatch(File_format,"Hersam Lab"))
+		// Only works with standard forward+reverse scans that have same voltage range in both directions
+		
+		sweep_point1 = (numpnts(voltage)/2)-1
+		sweep_point2 = (numpnts(voltage)/2)
+		Duplicate/O/R=(0,sweep_point1) J_raw J_forward
+		Duplicate/O/R=(sweep_point2,numpnts(voltage)-1) J_raw J_reverse
 		voltage_start1 = round(10000*voltage[0])/10000
-		voltage_start2 = round(10000*voltage[start_point+1])/10000
-	else // Inverted sweep
-		start_point = 0
-		for(i=1;i<numpnts(voltage);i+=1)
-			if(voltage[i]-voltage[i-1]>0.001)
-				start_point = i-2
-				break
-			endif
-		endfor
-		Duplicate/O/R=(0,start_point) J_raw J_reverse
-		Duplicate/O/R=(start_point+1,numpnts(voltage)-1) J_raw J_forward
-		voltage_start2 = round(10000*voltage[0])/10000
-		voltage_start1 = round(10000*voltage[start_point+1])/10000
 	endif
-	Variable voltage_step = abs(round(10000*(voltage[1]-voltage[0]))/10000)
 	SetScale/P x voltage_start1,voltage_step,"", J_forward
 	SetScale/P x voltage_start2,(voltage_step*-1),"", J_reverse
 	Reverse J_reverse
@@ -1980,10 +1993,10 @@ Function FEDMS_FitMobilityField(w,F_sqrt) : FitFunc
 	return w[0]*exp(w[1]*F_sqrt)
 End
 
-Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_area,active_thickness)
+Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format_in,device_area,active_thickness)
 	String sample_name
 	String fullpathname
-	String file_format
+	String file_format_in
 	Variable device_area
 	Variable active_thickness
 	// Parse filename from full pathname
@@ -1999,7 +2012,9 @@ Function FEDMS_LoadImpedanceFile(sample_name,fullpathname,file_format,device_are
 		return NaN
 	endif
 	String original_folder = GetDataFolder(1)
-	NewDataFolder/S/O root:FlexEDMS:$(sample_name)
+	NewDataFolder/S/O root:FlexEDMS
+	NewDataFolder/S/O $(sample_name)
+	String/G File_format = file_format_in
 	Variable/G Device_area_cm2 = device_area
 	Variable/G Active_thickness_cm = active_thickness
 	// Parse filename to extract measurement conditions
@@ -2148,7 +2163,7 @@ Function FEDMS_LoadImpedanceFolder(path_str, measurement_persons, comments, file
 	elseif(StringMatch(file_format,"Hersam Lab"))
 		file_list = IndexedFile(folder_path,-1,".z")
 	endif
-	// Filter list for J-V measurement data
+	// Filter list for impedance measurement data
 	Variable i
 	for(i=0;i<ItemsInList(file_list,";");i+=1)
 		String file_name = StringFromList(i,file_list,";")
@@ -2205,12 +2220,12 @@ Function FEDMS_LoadImpedanceFolderGUI()
 	FEDMS_LoadImpedanceFolder(S_path, measurement_persons, measurement_comments, file_format,device_area,active_thickness)
 End
 
-Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,device_area,mismatch)
+Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format_in,device_area,mismatch)
 	String sample_name
 	String fullpathname
 	String persons
 	String comments
-	String file_format
+	String file_format_in
 	Variable device_area
 	Variable mismatch
 	// Parse filename from full pathname
@@ -2228,6 +2243,7 @@ Function FEDMS_LoadJVFile(sample_name,fullpathname,persons,comments,file_format,
 	String original_folder = GetDataFolder(1)
 	NewDataFolder/O/S root:FlexEDMS
 	NewDataFolder/O/S $(sample_name)
+	String/G File_format = file_format_in
 	Variable/G Device_area_cm2 = device_area
 	// Parse filename to extract measurement conditions
 	String measurement_type = RemoveEnding(StringFromList(2,filename,"_"),".txt")

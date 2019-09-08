@@ -30,3 +30,7 @@ If you place the FlexEDMS folder into the Igor Procedures folder, the FlexEDMS s
 
 If you would like some help in using or customizing the tool for your research, please contact me (heiber@mailaps.org) to discuss a collaboration. 
 You can check out my research using this tool and other work on [Researchgate](https://www.researchgate.net/profile/Michael_Heiber).
+
+## Acknowledgments
+
+Primary support for the development of v1.0 comes from financial assistance award 70NANB14H012 from U.S. Department of Commerce, National Institute of Standards and Technology as part of the Center for Hierarchical Materials Design (CHiMaD).

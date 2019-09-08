@@ -43,13 +43,31 @@ Function FEDMS_AnalyzeCapacitanceData(device_name,[show_graphs])
 	// Get device info
 	SetDataFolder root:FlexEDMS:$(substrate_num)
 	NVAR Active_thickness_cm
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:
+	Wave rejection_mask_JV = $("rejection_mask")
+	Wave/T illuminations_JV = $("illuminations")
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations = $("illuminations")
-	Make/O/D/N=(numpnts(illuminations)) V_sats, V_sat_cors, C_sats, n_sats, n_scs, n_mps, n_ocs, k_mps, k_ocs, mu_mps, V_scs, V_mps, V_ocs
+	Make/O/N=0 V_sats, V_sat_cors, C_sats, n_sats, n_scs, n_mps, n_ocs, k_mps, k_ocs, mu_mps, V_scs, V_mps, V_ocs
 	// Integrate Capacitance vs Bias data for each light intensity
 	Variable i
+	Variable j
+	Variable index = 0
+	Variable V_status
 	for(i=0;i<numpnts(illuminations);i+=1)
-		FEDMS_CalculateCarrierDensity(device_name,illuminations[i])
+		for(j=0;j<numpnts(illuminations_JV);j+=1)
+			if(StringMatch(illuminations[i],illuminations_JV[j]))
+				if(rejection_mask_JV[j])
+					V_status = NaN
+				else
+					V_status = FEDMS_CalculateCarrierDensity(device_name,illuminations[i])
+				endif
+			endif
+		endfor
+		// check if status is NaN
+		if(numtype(V_status)==2)
+			continue
+		endif
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i])
 		Wave carrier_density
 		Wave voltage_applied
@@ -66,33 +84,33 @@ Function FEDMS_AnalyzeCapacitanceData(device_name,[show_graphs])
 		NVAR n_sc
 		NVAR n_mp
 		NVAR n_oc
-		V_sats[i] = V_sat
-		V_sat_cors[i] = V_sat_cor
-		C_sats[i] = C_sat
-		n_sats[i] = n_sat
-		n_scs[i] = n_sc
-		n_mps[i] = n_mp
-		n_ocs[i] = n_oc
+		V_sats[index] = {V_sat}
+		V_sat_cors[index] = {V_sat_cor}
+		C_sats[index] = {C_sat}
+		n_sats[index] = {n_sat}
+		n_scs[index] = {n_sc}
+		n_mps[index] = {n_mp}
+		n_ocs[index] = {n_oc}
 		// Gather appropriate J-V data
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i])
 		Wave J_avg
 		Wave J_br
 		NVAR V_oc
 		NVAR V_mp
-		V_scs[i] = 0
-		V_mps[i] = V_mp
-		V_ocs[i] = V_oc
+		V_scs[index] = {0}
+		V_mps[index] = {V_mp}
+		V_ocs[index] = {V_oc}
 		// Calculate Bias dependent k_br and mu_eff
-		Variable j
 		for(j=0;j<numpnts(voltage_applied);j+=1)
-			V_int[j] = V_oc-voltage_cor[j]
+			V_int[j] = V_oc-voltage_applied[j]
 			F_int[j] = V_int[j]/Active_thickness_cm
 			k_br[j] = 1e-3*J_br(voltage_applied[j])/(1.602177e-19*Active_thickness_cm*carrier_density[j]^2)
 			mu_eff[j] = 1e-3*-J_avg(voltage_applied[j])*Active_thickness_cm/(2*1.60217662e-19*carrier_density[j]*V_int[j])
 		endfor
-		k_mps[i] = {interp(V_mp,voltage_applied,k_br)}
-		k_ocs[i] = {interp(V_oc,voltage_applied,k_br)}
-		mu_mps[i] = {interp(V_mp,voltage_applied,mu_eff)}
+		k_mps[index] = {interp(V_mp,voltage_applied,k_br)}
+		k_ocs[index] = {interp(V_oc,voltage_applied,k_br)}
+		mu_mps[index] = {interp(V_mp,voltage_applied,mu_eff)}
+		index += 1
 	endfor
 	// Plot calculated charge carrier density graphs
 	FEDMS_PlotCarrierDensityVsBias(device_name)
@@ -106,7 +124,15 @@ Function FEDMS_AnalyzeCapacitanceData(device_name,[show_graphs])
 	DrawText 0,0,"Select any data sets that should be rejected from further analysis."
 	// Add Checkbox for each illumination
 	for(i=0;i<numpnts(illuminations);i+=1)
-		CheckBox $("checkbox_"+num2str(i)) title=illuminations[i],pos={50,17*i+5},value=rejection_mask[i]
+		for(j=0;j<numpnts(illuminations_JV);j+=1)
+			if(StringMatch(illuminations[i],illuminations_JV[j]) && rejection_mask_JV[j]==0)
+				CheckBox $("checkbox_"+num2str(i)) title=illuminations[i],pos={50,17*i+5},value=rejection_mask[i]
+			endif
+			if(StringMatch(illuminations[i],illuminations_JV[j]) && rejection_mask_JV[j]==1)
+				rejection_mask[i] = 1
+				CheckBox $("checkbox_"+num2str(i)) title=illuminations[i],pos={50,17*i+5},value=rejection_mask[i],disable=2
+			endif
+		endfor
 	endfor
 	Button button0 title="Continue",proc=FEDMS_Button_RejectIPDA,size={80,25},pos={200,50},fSize=14
 	PauseForUser $graph_name
@@ -380,10 +406,11 @@ Function FEDMS_AnalyzeImpedanceData(device_name,[show_graphs])
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:
 	Wave/T illuminations_JV = $("illuminations")
 	Wave intensities_JV = $("intensities")
+	Wave rejection_mask_JV = $("rejection_mask")
 	Variable i, j
 	for(i=0;i<numpnts(illuminations);i+=1)
 		for(j=0;j<numpnts(illuminations_JV);j+=1)
-			if(StringMatch(illuminations[i],illuminations_JV[j]))
+			if(StringMatch(illuminations[i],illuminations_JV[j]) && rejection_mask_JV[j]==0)
 				intensities[i] = intensities_JV[j]
 				break
 			endif
@@ -533,7 +560,11 @@ Function FEDMS_AnalyzeJVIntensity(device_name)
 		FEDMS_CalculatePhotocurrent(device_name,illuminations[i])
 		NVAR V_0
 		Wave photocurrent
-		J_sat[i] = photocurrent(V_0-2)
+		if(numtype(V_0)!=0)
+			J_sat[i] = photocurrent(-1.5)
+		else
+			J_sat[i] = photocurrent(V_0-2)
+		endif
 	endfor
 	I_suns_wave = J_sat/J_sat[index_1sun]
 	intensities = 100*I_suns_wave
@@ -610,13 +641,20 @@ Function FEDMS_AnalyzePhotocurrent(device_name,measurement_name)
 	DrawText 0,0,"\\Z10Move cursors to select fit range and click Fit."
 	Button button0 title="Fit",proc=FEDMS_Button_FitPhotocurrent,size={60,25},fSize=14
 	Button button1 title="Done",proc=FEDMS_Button_Done,size={60,25},fSize=14
-	Button button2 title="Cancel",proc=FEDMS_Button_Cancel,size={60,25},fSize=14
+	Button button2 title="Reject",proc=FEDMS_Button_RejectPhotocurrent,size={60,25},fSize=14
+	Button button3 title="Cancel",proc=FEDMS_Button_Cancel,size={60,25},fSize=14
 	PauseForUser $graph_name
 	// Check if user has cancelled the fit
 	if(V_status==-1)
 		KillVariables/Z V_status
 		SetDataFolder original_data_folder
 		Return NaN
+	endif
+	// Check if user has rejected the dataset
+	if(V_status==-2)
+		KillVariables/Z V_status
+		SetDataFolder original_data_folder
+		Return -2
 	endif
 	// Get final photocurrent fit
 	Wave fit_photocurrent
@@ -680,14 +718,25 @@ Function FEDMS_AnalyzePhotocurrentData(device_name)
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV
 	Wave/T illuminations
 	Wave intensities
-	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV
 	KillWaves/Z $"J_br_intensity"  $"J_gen_intensity"
 	Make/D/O/N=(numpnts(illuminations)) V_sat_onsets, V_eff_onsets, J_sat_onsets
+	Wave rejection_mask
+	if(!WaveExists(rejection_mask))
+		Make/D/N=(numpnts(illuminations))/O $("rejection_mask")
+		Wave rejection_mask
+		rejection_mask = 0
+	endif
 	Variable i
 	for(i=0;i<numpnts(illuminations);i+=1)
 		Variable status = FEDMS_AnalyzePhotocurrent(device_name,illuminations[i])
+		// Return NaN if cancel is detected
 		if(numtype(status)==2)
 			return NaN
+		endif
+		// Skip this photocurrent curve if -2 is returned
+		if(status==-2)
+			rejection_mask[i] = 1
+			continue
 		endif
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i])
 		NVAR V_sat_onset
@@ -1151,6 +1200,21 @@ Function FEDMS_Button_RejectIPDA(ba) : ButtonControl
 	return 0
 End
 
+Function FEDMS_Button_RejectPhotocurrent(ba) : ButtonControl
+	STRUCT WMButtonAction &ba
+	switch( ba.eventCode )
+		case 2: // mouse up
+			// click code here
+			NVAR V_status
+			V_status = -2
+			KillWindow $WinName(0,1)
+			break
+		case -1: // control being killed
+			break
+	endswitch
+	return 0
+End
+
 Function FEDMS_Button_RejectTOF(ba) : ButtonControl
 	STRUCT WMButtonAction &ba
 	switch( ba.eventCode )
@@ -1194,7 +1258,11 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 	NVAR V_mp
 	NVAR V_sat_JV = $("V_sat_onset")
 	Wave J_avg
-	Wave fit_photocurrent
+	Wave/Z fit_photocurrent
+	if(!WaveExists(fit_photocurrent))
+		SetDataFolder original_data_folder
+		return NaN
+	endif
 	Wave voltage_effective
 	// Get impedance data
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+measurement_name):
@@ -1286,6 +1354,7 @@ Function FEDMS_CalculateCarrierDensity(device_name,measurement_name)
 	KillWaves/Z $"n_oc_wave"
 	// Restore original working directory
 	SetDataFolder original_data_folder
+	return 0
 End
 
 Function FEDMS_CalculateIPDAFieldDepends(device_name)
@@ -1541,8 +1610,10 @@ Function FEDMS_CalculatePhotocurrent(device_name,measurement_name)
 	WaveStats/Q photocurrent
 	FindLevel/Q/R=(0,pnt2x(photocurrent,V_npnts-1)) photocurrent,0
 	Reverse photocurrent
-	Variable/G/D V_0 = V_LevelX
-	if(numtype(V_0)==2)
+	Variable/G/D V_0
+	if(V_flag==0)
+		V_0 = V_LevelX
+	else
 		WaveStats/Q photocurrent
 		V_0 = V_minloc
 	endif
@@ -2627,16 +2698,39 @@ Function FEDMS_PlotCarrierDensityVsBias(device_name) : Graph
 	String original_data_folder = GetDataFolder(1)
 	String substrate_num = RemoveEnding(device_name)
 	String device_num = device_name[Strlen(device_name)-1]
+	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV
+	Wave rejection_mask_JV = $("rejection_mask")
+	Wave/T illuminations_JV = $("illuminations")
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
+	Make/N=(numpnts(illuminations))/O skip_mask
 	Variable i
+	Variable j
+	Variable trace_count = 0
 	for(i=0;i<numpnts(illuminations);i+=1)
+		skip_mask[i] = 0
+		// Skip illumination if JV data was rejected
+		for(j=0;j<numpnts(illuminations_JV);j+=1)
+			if(StringMatch(illuminations[i],illuminations_JV[j]))
+				skip_mask[i] = rejection_mask_JV[j]
+				break
+			endif
+		endfor
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i]):
-		if(i==0)
+		Wave/Z carrier_density
+		// Skip illumination if carrier density data does not exists, and skip illumination condition if it doesn't exist
+		if(!WaveExists(carrier_density))
+			skip_mask[i] = 1
+		endif
+		if(skip_mask[i])
+			continue
+		endif
+		if(trace_count==0)
 			Display/W=(506.4,240.2,744,408.8)/N=$("Bias_Carrier_Density_"+device_name) $("carrier_density") vs $("voltage_applied")
 		else
 			AppendToGraph $("carrier_density") vs $("voltage_applied")
 		endif
+		trace_count += 1
 	endfor
 	Execute "FEDMS_GraphStyle()"
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
@@ -2657,15 +2751,29 @@ Function FEDMS_PlotCarrierDensityVsBias(device_name) : Graph
 	SetAxis left 1e14,*
 	SetAxis bottom -1,*
 	// Add legend
-	i = numpnts(illuminations)-1
-	Legend/C/N=text1/J/F=0/A=LT/X=4/Y=4 "\\s(carrier_density#"+num2str(i)+") "+illuminations[i]
-	for(i-=1;i>=0;i-=1)
-		if(i==0)
-			AppendText "\\s(carrier_density) "+illuminations[i];DelayUpdate
-		else
-			AppendText "\\s(carrier_density#"+num2str(i)+") "+illuminations[i];DelayUpdate
+	trace_count -= 1
+	Variable legend_count = 0
+	for(i=numpnts(illuminations)-1;i>=0;i-=1)
+		if(skip_mask[i])
+			continue
 		endif
+		if(legend_count==0)
+			if(trace_count==0)
+				Legend/C/N=text1/J/F=0/A=LT/X=4/Y=4 "\\s(carrier_density) "+illuminations[i]
+			else
+				Legend/C/N=text1/J/F=0/A=LT/X=4/Y=4 "\\s(carrier_density#"+num2str(trace_count)+") "+illuminations[i]
+			endif
+		else
+			if(trace_count==0)
+				AppendText "\\s(carrier_density) "+illuminations[i];DelayUpdate
+			else
+				AppendText "\\s(carrier_density#"+num2str(trace_count)+") "+illuminations[i];DelayUpdate
+			endif
+		endif
+		legend_count += 1
+		trace_count -= 1
 	endfor
+	KillWaves skip_mask
 	SetDataFolder original_data_folder
 End
 
@@ -2704,14 +2812,20 @@ Function FEDMS_PlotKbrVsBias(device_name) : Graph
 	String device_num = device_name[Strlen(device_name)-1]
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
+	Wave rejection_mask
 	Variable i
+	Variable trace_count = 0
 	for(i=0;i<numpnts(illuminations);i+=1)
+		if(rejection_mask[i])
+			continue
+		endif
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i]):
-		if(i==0)
+		if(trace_count==0)
 			Display/W=(506.4,240.2,744,408.8)/N=$("Bias_Kbr_"+device_name) $("k_br") vs $("voltage_applied")
 		else
 			AppendToGraph $("k_br") vs $("voltage_applied")
 		endif
+		trace_count += 1
 	endfor
 	Execute "FEDMS_GraphStyle()"
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
@@ -2730,12 +2844,17 @@ Function FEDMS_PlotKbrVsBias(device_name) : Graph
 	SetAxis/A=2 left
 	SetAxis bottom 0,*
 	// Add legend
+	trace_count = 0
 	for(i=0;i<numpnts(illuminations);i+=1)
-		if(i==0)
+		if(rejection_mask[i])
+			continue
+		endif
+		if(trace_count==0)
 			Legend/C/N=text1/J/F=0/A=LT "\\s(k_br) "+illuminations[i]
 		else
-			AppendText "\\s(k_br#"+num2str(i)+") "+illuminations[i];DelayUpdate
+			AppendText "\\s(k_br#"+num2str(trace_count)+") "+illuminations[i];DelayUpdate
 		endif
+		trace_count += 1
 	endfor
 	SetDataFolder original_data_folder
 End
@@ -2747,14 +2866,20 @@ Function FEDMS_PlotMobilityVsBias(device_name) : Graph
 	String device_num = device_name[Strlen(device_name)-1]
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Wave/T illuminations
+	Wave rejection_mask
 	Variable i
+	Variable trace_count = 0
 	for(i=0;i<numpnts(illuminations);i+=1)
-		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$(illuminations[i]):
-		if(i==0)
+		if(rejection_mask[i])
+			continue
+		endif
+		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance:$("CV_"+illuminations[i]):
+		if(trace_count==0)
 			Display/W=(506.4,240.2,744,408.8)/N=$("Bias_Mobility_"+device_name) $("mu_eff") vs $("voltage_applied")
 		else
 			AppendToGraph $("mu_eff") vs $("voltage_applied")
 		endif
+		trace_count += 1
 	endfor
 	SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):Impedance
 	Execute "FEDMS_GraphStyle()"
@@ -2771,12 +2896,17 @@ Function FEDMS_PlotMobilityVsBias(device_name) : Graph
 	SetAxis/A=2 left
 	SetAxis bottom 0,*
 	// Add legend
+	trace_count = 0
 	for(i=0;i<numpnts(illuminations);i+=1)
-		if(i==0)
+		if(rejection_mask[i])
+			continue
+		endif
+		if(trace_count==0)
 			Legend/C/N=text1/J/F=0/A=LT "\\s(mu_eff) "+illuminations[i]
 		else
-			AppendText "\\s(mu_eff#"+num2str(i)+") "+illuminations[i];DelayUpdate
+			AppendText "\\s(mu_eff#"+num2str(trace_count)+") "+illuminations[i];DelayUpdate
 		endif
+		trace_count += 1
 	endfor
 	SetDataFolder original_data_folder
 End
@@ -2999,9 +3129,11 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	Display /W=(580,40,1080,365) $("photocurrent") vs $("voltage_effective")
 	// Append the rest of the photocurrent curves
 	Variable i
+	Variable trace_count = 0
 	for(i=1;i<numpnts(illuminations);i+=1)
 		SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i]):
 		AppendToGraph $("photocurrent") vs $("voltage_effective")
+		trace_count += 1
 	endfor
 	Execute "FEDMS_GraphStyle()"
 	SetAxis bottom 0.01,*
@@ -3013,9 +3145,10 @@ Function FEDMS_PlotPhotocurrentData(device_name,[show_fits])
 	if(show_fits==1)
 		for(i=0;i<numpnts(illuminations);i+=1)
 			SetDataFolder root:FlexEDMS:$(substrate_num):$(device_num):JV:$(illuminations[i]):
-			if(Exists("fit_photocurrrent")==1)
+			if(Exists("fit_photocurrent")==1)
 				AppendToGraph $("fit_photocurrent") vs $("voltage_effective")
-				ModifyGraph rgb[numpnts(illuminations)+i] = (0,0,0)
+				trace_count += 1
+				ModifyGraph rgb[trace_count] = (0,0,0)
 			endif
 		endfor
 		if(WaveExists(J_sat_onsets))
